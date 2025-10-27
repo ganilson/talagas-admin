@@ -30,7 +30,7 @@ const dailyOrders = [
   { day: "Sáb", pedidos: 67, entregas: 65 },
   { day: "Dom", pedidos: 43, entregas: 41 },
 ]
-
+ 
 const revenueData = [
   { month: "Jan", valor: 1250000 },
   { month: "Fev", valor: 1420000 },
