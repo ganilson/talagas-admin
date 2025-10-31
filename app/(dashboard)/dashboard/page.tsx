@@ -55,14 +55,6 @@ export default function DashboardPage() {
       <AppHeader title="Dashboard" />
 
       <div className="flex-1 space-y-6 p-6">
-        {/* Advertising Banner */}
-        <AdvertisingBanner
-          title="Seja bem vindo ao seu Sistema De Gestão de Pedidos!"
-          description="Receba seus pedidos em tempo real, faça a distribuição de forma fácil e segura!."
-          imageUrl="/gas-cylinder-promotion.jpg"
-          ctaText="Ver Detalhes"
-          ctaLink="#"
-        />
 
         {/* Stats Cards */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

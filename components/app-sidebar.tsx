@@ -5,7 +5,8 @@ import { usePathname } from "next/navigation"
 import { MaterialIcon } from "./material-icon"
 import { cn } from "@/lib/utils"
 import type { AccessItem } from "@/lib/auth"
-
+import Image from "next/image"
+import logoImage from "@/public/simbolo.png"
 interface AppSidebarProps {
   access: AccessItem[]
   userName: string
@@ -20,8 +21,8 @@ export function AppSidebar({ access, userName, userRole }: AppSidebarProps) {
       <div className="flex h-full flex-col">
         {/* Logo/Header */}
         <div className="flex h-16 items-center gap-3 border-b border-sidebar-border px-6">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary">
-            <MaterialIcon icon="local_gas_station" className="text-xl text-primary-foreground" />
+          <div className="flex h-10 w-10 items-center justify-center">
+            <Image src={logoImage} alt="TalaGás" width={36} height={36} className="object-contain" />
           </div>
           <div className="flex flex-col">
             <span className="text-sm font-semibold text-sidebar-foreground">TalaGás</span>

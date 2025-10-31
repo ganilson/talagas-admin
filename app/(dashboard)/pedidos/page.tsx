@@ -663,11 +663,7 @@ export default function PedidosPage() {
       <AppHeader title="Pedidos" />
 
       <div className="flex-1 space-y-6 p-6">
-        <AdvertisingBanner
-          title="Entrega Rápida Garantida!"
-          description="Nossos entregadores estão prontos para atender você em até 30 minutos."
-          variant="compact"
-        />
+
 
         {/* Stats */}
         <div className="grid gap-4 md:grid-cols-5">

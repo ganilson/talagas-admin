@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { MaterialIcon } from "@/components/material-icon"
+import Image from "next/image"
+import logoImage from "@/public/simbolo.png"
 import { login, storeUser, getStoredUser } from "@/lib/auth"
 import { useToast } from "@/hooks/use-toast"
 
@@ -60,8 +62,8 @@ export default function AuthPage() {
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-background via-background to-primary/5 p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-4 text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-primary">
-            <MaterialIcon icon="local_gas_station" className="text-3xl text-primary-foreground" />
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl">
+            <Image src={logoImage} alt="TalaGás" width={64} height={64} className="object-contain" />
           </div>
           <div>
             <CardTitle className="text-2xl">TalaGás</CardTitle>
