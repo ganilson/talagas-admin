@@ -59,3 +59,13 @@ export async function updatePonto(id: string, payload: UpdatePontoPayload): Prom
   })
   return res.data
 }
+
+/**
+ * DELETE /empresas/pontos/:id
+ */
+export async function deletePonto(id: string): Promise<{ success: boolean }> {
+  const res = await apiFetch<{ success: boolean }>(`/empresas/pontos/${id}`, {
+    method: "DELETE",
+  })
+  return res.data
+}

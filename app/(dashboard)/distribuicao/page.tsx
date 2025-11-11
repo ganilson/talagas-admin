@@ -335,6 +335,37 @@ export default function DistribuicaoPage() {
     }
   }
 
+  // Remove ponto (otimista) -> chama DELETE no backend
+  const removePonto = async (id: string) => {
+    const prev = pontos
+    // otimista: remover do estado e do cache de QR
+    setPontos((cur) => cur.filter((p) => p.id !== id))
+    setQrCache((c) => {
+      const copy = { ...c }
+      delete copy[id]
+      return copy
+    })
+    try {
+      await pontoService.deletePonto(id)
+      // persist cache/estado no localStorage
+      try {
+        localStorage.setItem("pontos_venda", JSON.stringify(pontos.filter((p) => p.id !== id)))
+      } catch (e) {
+        // ignore
+      }
+      toast({ title: "Ponto removido", description: "O ponto foi removido com sucesso." })
+    } catch (err: any) {
+      // rollback em caso de erro
+      setPontos(prev)
+      toast({
+        title: "Erro ao remover ponto",
+        description: err?.message ?? "Não foi possível remover o ponto no servidor.",
+        variant: "destructive",
+      })
+      console.error("Erro ao remover ponto:", err)
+    }
+  }
+
   // QR helpers: priorizar qrCodeLink proveniente do backend, fallback para esquema interno
   const payloadFor = (p: PontoVenda) => {
     if (!p) return ""

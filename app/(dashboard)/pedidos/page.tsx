@@ -23,8 +23,9 @@ import { cn } from "@/lib/utils"
 import { formatAOA } from "@/lib/angola-validations"
 import { requestNotificationPermission, showNotification, isNotificationSupported } from "@/lib/notifications"
 import { AdvertisingBanner } from "@/components/advertising-banner"
-import { useWebSocket } from "@/lib/websocket-context"
-import { WebSocketStatus } from "@/components/websocket-status"
+import * as pedidoService from "@/services/pedidoService"
+import { initSocket } from "@/lib/socket"
+import { getStoredUser } from "@/lib/auth"
 
 interface Order {
   id: string
@@ -34,7 +35,7 @@ interface Order {
   telefone: string
   itens: { tipo: string; quantidade: number; preco: number }[]
   valor: number
-  status: "pendente" | "aceito" | "em_entrega" | "entregue" | "cancelado"
+  status: "pendente" | "confirmado" | "entregue" | "cancelado"
   horario: string
   entregador?: string
   metodoPagamento: "dinheiro" | "transferencia" | "multicaixa"
@@ -42,367 +43,137 @@ interface Order {
   updatedAt: Date
   tempoEntrega?: number
   observacoes?: string
+  codigoPedido?: string
 }
 
 const deliveryPersons = ["João Silva", "Pedro Costa", "Ana Souza", "Carlos Mendes"]
 const bairros = ["Centro", "Vila Nova", "Jardim América", "Bela Vista", "Talatona", "Morro Bento", "Viana"]
 const tiposBotija = ["Botijão 13kg", "Botijão 6kg", "Botijão 45kg"]
 
-const generateMockOrders = (): Order[] => {
-  const orders: Order[] = []
-  const now = new Date()
-
-  for (let i = 0; i < 50; i++) {
-    const createdAt = new Date(now.getTime() - Math.random() * 7 * 24 * 60 * 60 * 1000)
-    const status: Order["status"] = ["pendente", "aceito", "em_entrega", "entregue", "cancelado"][
-      Math.floor(Math.random() * 5)
-    ] as Order["status"]
-
-    orders.push({
-      id: (1250 + i).toString(),
-      cliente: ["Maria Silva", "João Santos", "Ana Costa", "Carlos Lima", "Paula Oliveira"][
-        Math.floor(Math.random() * 5)
-      ],
-      endereco: `Rua ${Math.floor(Math.random() * 999)}, ${Math.floor(Math.random() * 999)}`,
-      bairro: bairros[Math.floor(Math.random() * bairros.length)],
-      telefone: `+244 9${Math.floor(Math.random() * 90) + 10} ${Math.floor(Math.random() * 900) + 100} ${Math.floor(Math.random() * 900) + 100}`,
-      itens: [
-        {
-          tipo: tiposBotija[Math.floor(Math.random() * tiposBotija.length)],
-          quantidade: Math.floor(Math.random() * 3) + 1,
-          preco: 9500,
-        },
-      ],
-      valor: (Math.floor(Math.random() * 3) + 1) * 9500,
-      status,
-      horario: createdAt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
-      entregador:
-        status !== "pendente" ? deliveryPersons[Math.floor(Math.random() * deliveryPersons.length)] : undefined,
-      metodoPagamento: ["dinheiro", "transferencia", "multicaixa"][
-        Math.floor(Math.random() * 3)
-      ] as Order["metodoPagamento"],
-      createdAt,
-      updatedAt: createdAt,
-      tempoEntrega: status === "entregue" ? Math.floor(Math.random() * 60) + 15 : undefined,
-      observacoes: Math.random() > 0.7 ? "Entregar na portaria" : undefined,
-    })
-  }
-
-  return orders.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-}
-
 export default function PedidosPage() {
   const { toast } = useToast()
-  const { isConnected, lastMessage, sendMessage } = useWebSocket()
-  const [allOrders, setAllOrders] = useState<Order[]>([])
+
+  // server-driven pedidos + pagination
+  const [pedidos, setPedidos] = useState<pedidoService.Pedido[]>([])
+  const [pedidosPagination, setPedidosPagination] = useState<pedidoService.PaginationInfo | null>(null)
+  const [pedidoFilters, setPedidoFilters] = useState<{ page: number; limit: number; status?: string; codigoPedido?: string }>({
+    page: 1,
+    limit: 20,
+    status: undefined,
+    codigoPedido: "",
+  })
+
+  // UI state (selection, dialogs, etc.)
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
   const [isForwardDialogOpen, setIsForwardDialogOpen] = useState(false)
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false)
   const [selectedDeliveryPerson, setSelectedDeliveryPerson] = useState("")
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set())
-
-  const [searchQuery, setSearchQuery] = useState("")
-  const [filterStatus, setFilterStatus] = useState<"all" | Order["status"]>("all")
-  const [filterBairro, setFilterBairro] = useState<string>("all")
-  const [filterEntregador, setFilterEntregador] = useState<string>("all")
-  const [filterTipoBotija, setFilterTipoBotija] = useState<string>("all")
-  const [filterMetodoPagamento, setFilterMetodoPagamento] = useState<string>("all")
-  const [filterPriceMin, setFilterPriceMin] = useState("")
-  const [filterPriceMax, setFilterPriceMax] = useState("")
-  const [filterDateStart, setFilterDateStart] = useState("")
-  const [filterDateEnd, setFilterDateEnd] = useState("")
-  const [sortBy, setSortBy] = useState<"createdAt" | "valor" | "tempoEntrega">("createdAt")
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
-  const [pageSize, setPageSize] = useState(20)
-  const [currentPage, setCurrentPage] = useState(1)
   const [showFilters, setShowFilters] = useState(false)
 
-  // Initialize orders
+  // local UI filters (some kept for client-side, but server fetch uses status/codigoPedido/page/limit)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [filterStatus, setFilterStatus] = useState<"all" | Order["status"]>("all")
+  const [pageSize, setPageSize] = useState<number>(20)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [codigoPedidoInput, setCodigoPedidoInput] = useState("")
+
+  // map backend Pedido -> UI Order
+  const mapBackendToOrder = (p: pedidoService.Pedido): Order => {
+    const pa = p.pontoDeAtendimento
+    const itens =
+      p.produtos?.map((it) => {
+        const pe = it.produtoEmpresaId
+        const tipo =
+          typeof (pe as any).produtoId === "object" ? ((pe as any).produtoId?.descricao || "Produto") : String((pe as any).produtoId)
+        const preco = (pe as any).preco ?? 0
+        return { tipo, quantidade: it.quantidade ?? 1, preco }
+      }) ?? []
+
+    const created = p.createdAt ? new Date(p.createdAt) : new Date()
+    return {
+      id: p.codigoPedido ?? p._id,
+      codigoPedido: p.codigoPedido,
+      cliente: p.nomeCompleto ?? "-",
+      endereco: pa?.endereco ?? pa?.descricao ?? "-",
+      bairro: "-", // backend doesn't provide bairro explicitly in sample
+      telefone: p?.telefone ?? "-",
+      itens,
+      valor: p.total ?? 0,
+      status: (p.status as any) ?? "pendente",
+      horario: created.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
+      metodoPagamento: (p.metodoPagamento as any) ?? "dinheiro",
+      createdAt: created,
+      updatedAt: p.updatedAt ? new Date(p.updatedAt) : created,
+      observacoes: undefined,
+      codigoPedido: p.codigoPedido,
+    }
+  }
+
+  const loadPedidos = async (filters?: Partial<typeof pedidoFilters>) => {
+    const f = { ...pedidoFilters, ...(filters || {}) }
+    try {
+      const { items, pagination } = await pedidoService.filterPedidos({
+        page: f.page,
+        limit: f.limit,
+        status: f.status,
+        codigoPedido: f.codigoPedido,
+      })
+      setPedidos(items)
+      setPedidosPagination(pagination)
+      // synchronize UI pagination controls
+      setCurrentPage(pagination?.page ?? f.page)
+      setPageSize(pagination?.limit ?? f.limit)
+      setPedidoFilters(f)
+    } catch (err: any) {
+      console.error("Erro ao carregar pedidos:", err)
+      toast({ title: "Erro ao carregar pedidos", description: err?.message ?? String(err), variant: "destructive" })
+    }
+  }
+
+  // initial load / refetch when filters change (page/limit/status/codigoPedido)
   useEffect(() => {
-    setAllOrders(generateMockOrders())
+    loadPedidos()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pedidoFilters.page, pedidoFilters.limit, pedidoFilters.status, pedidoFilters.codigoPedido])
+
+  // socket: conectar para receber novos pedidos/atualizações
+  useEffect(() => {
+    const user = getStoredUser()
+    const estabId = user?.estabelecimentoId
+    if (!estabId) return
+
+    const cleanup = initSocket(estabId, {
+      onNovoPedido: (payload) => {
+        toast({ title: "Novo pedido", description: `Pedido: ${payload?.data?.codigoPedido ?? "novo"}` })
+        // refetch page
+        loadPedidos()
+        if (isNotificationSupported()) {
+          showNotification("TalaGás - Novo Pedido", { body: `Pedido: ${payload?.data?.codigoPedido ?? ""}` })
+        }
+      },
+      onPedidoAtualizado: (payload) => {
+        toast({ title: "Pedido atualizado", description: `Pedido: ${payload?.data?.codigoPedido ?? "atualizado"}` })
+        loadPedidos()
+      },
+    })
+
+    return () => {
+      try { cleanup?.() } catch (e) {}
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Request notification permission on mount
-  useEffect(() => {
-    if (isNotificationSupported()) {
-      requestNotificationPermission()
-    }
-  }, [])
+  // Map server pedidos to UI orders for rendering
+  const ordersForRender: Order[] = pedidos.map(mapBackendToOrder)
 
-  useEffect(() => {
-    if (lastMessage) {
-      console.log("[v0] Received WebSocket message:", lastMessage)
+  const totalPages = Math.max(1, pedidosPagination ? pedidosPagination.pages : 1)
+  const totalItems = pedidosPagination?.total ?? pedidos.length
 
-      if (lastMessage.type === "new_order" && lastMessage.data) {
-        const newOrder: Order = {
-          id: lastMessage.data.id,
-          cliente: lastMessage.data.cliente,
-          endereco: `Rua ${Math.floor(Math.random() * 999)}, ${Math.floor(Math.random() * 999)}`, // Placeholder address, ideally from message
-          bairro: bairros[Math.floor(Math.random() * bairros.length)], // Placeholder bairro, ideally from message
-          telefone: `+244 9${Math.floor(Math.random() * 90) + 10} ${Math.floor(Math.random() * 900) + 100} ${Math.floor(Math.random() * 900) + 100}`, // Placeholder phone, ideally from message
-          itens: [
-            {
-              tipo: tiposBotija[Math.floor(Math.random() * tiposBotija.length)], // Placeholder item, ideally from message
-              quantidade: Math.floor(Math.random() * 3) + 1,
-              preco: 9500,
-            },
-          ],
-          valor: (Math.floor(Math.random() * 3) + 1) * 9500, // Placeholder value, ideally from message
-          status: "pendente",
-          horario: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
-          metodoPagamento: ["dinheiro", "transferencia", "multicaixa"][
-            Math.floor(Math.random() * 3)
-          ] as Order["metodoPagamento"], // Placeholder payment method, ideally from message
-          createdAt: new Date(), // Ideally from message
-          updatedAt: new Date(), // Ideally from message
-        }
-
-        setAllOrders((prev) => [newOrder, ...prev])
-
-        toast({
-          title: "Novo Pedido via WebSocket!",
-          description: `Pedido #${newOrder.id} de ${newOrder.cliente}`,
-        })
-
-        showNotification("TalaGás - Novo Pedido!", {
-          body: `Pedido #${newOrder.id} de ${newOrder.cliente}`,
-          tag: `order-${newOrder.id}`,
-        })
-      } else if (lastMessage.type === "order_status_changed" && lastMessage.data) {
-        setAllOrders((prev) =>
-          prev.map((order) =>
-            order.id === lastMessage.data.orderId
-              ? { ...order, status: lastMessage.data.status, updatedAt: new Date() }
-              : order,
-          ),
-        )
-
-        toast({
-          title: "Status Atualizado",
-          description: `Pedido #${lastMessage.data.orderId} - ${lastMessage.data.status}`,
-        })
-      }
-    }
-  }, [lastMessage, toast])
-
-  // Simulate real-time orders (fallback when WebSocket is not connected)
-  useEffect(() => {
-    if (isConnected) {
-      // WebSocket is handling real-time updates
-      return
-    }
-
-    const interval = setInterval(() => {
-      if (Math.random() < 0.2) {
-        const newOrder: Order = {
-          id: (Date.now() % 10000).toString(),
-          cliente: ["Carlos Lima", "Paula Oliveira", "Roberto Alves", "Fernanda Costa"][Math.floor(Math.random() * 4)],
-          endereco: `Rua ${Math.floor(Math.random() * 999)}, ${Math.floor(Math.random() * 999)}`,
-          bairro: bairros[Math.floor(Math.random() * bairros.length)],
-          telefone: `+244 9${Math.floor(Math.random() * 90) + 10} ${Math.floor(Math.random() * 900) + 100} ${Math.floor(Math.random() * 900) + 100}`,
-          itens: [
-            {
-              tipo: tiposBotija[Math.floor(Math.random() * tiposBotija.length)],
-              quantidade: Math.floor(Math.random() * 3) + 1,
-              preco: 9500,
-            },
-          ],
-          valor: (Math.floor(Math.random() * 3) + 1) * 9500,
-          status: "pendente",
-          horario: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
-          metodoPagamento: ["dinheiro", "transferencia", "multicaixa"][
-            Math.floor(Math.random() * 3)
-          ] as Order["metodoPagamento"],
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        }
-
-        setAllOrders((prev) => [newOrder, ...prev])
-
-        toast({
-          title: "Novo Pedido!",
-          description: `Pedido #${newOrder.id} de ${newOrder.cliente}`,
-        })
-
-        showNotification("TalaGás - Novo Pedido!", {
-          body: `Pedido #${newOrder.id} de ${newOrder.cliente}`,
-          tag: `order-${newOrder.id}`,
-        })
-      }
-    }, 15000)
-
-    return () => clearInterval(interval)
-  }, [toast, isConnected])
-
-  const filteredAndSortedOrders = useMemo(() => {
-    const filtered = allOrders.filter((order) => {
-      // Search filter
-      if (searchQuery) {
-        const query = searchQuery.toLowerCase()
-        const matchesSearch =
-          order.id.includes(query) ||
-          order.cliente.toLowerCase().includes(query) ||
-          order.telefone.includes(query) ||
-          order.bairro.toLowerCase().includes(query)
-        if (!matchesSearch) return false
-      }
-
-      // Status filter
-      if (filterStatus !== "all" && order.status !== filterStatus) return false
-
-      // Bairro filter
-      if (filterBairro !== "all" && order.bairro !== filterBairro) return false
-
-      // Entregador filter
-      if (filterEntregador !== "all" && order.entregador !== filterEntregador) return false
-
-      // Tipo botija filter
-      if (filterTipoBotija !== "all") {
-        const hasTipo = order.itens.some((item) => item.tipo === filterTipoBotija)
-        if (!hasTipo) return false
-      }
-
-      // Metodo pagamento filter
-      if (filterMetodoPagamento !== "all" && order.metodoPagamento !== filterMetodoPagamento) return false
-
-      // Price range filter
-      if (filterPriceMin && order.valor < Number.parseFloat(filterPriceMin)) return false
-      if (filterPriceMax && order.valor > Number.parseFloat(filterPriceMax)) return false
-
-      // Date range filter
-      if (filterDateStart) {
-        const startDate = new Date(filterDateStart)
-        if (order.createdAt < startDate) return false
-      }
-      if (filterDateEnd) {
-        const endDate = new Date(filterDateEnd)
-        endDate.setHours(23, 59, 59, 999)
-        if (order.createdAt > endDate) return false
-      }
-
-      return true
-    })
-
-    // Sorting
-    filtered.sort((a, b) => {
-      let comparison = 0
-
-      switch (sortBy) {
-        case "createdAt":
-          comparison = a.createdAt.getTime() - b.createdAt.getTime()
-          break
-        case "valor":
-          comparison = a.valor - b.valor
-          break
-        case "tempoEntrega":
-          comparison = (a.tempoEntrega || 0) - (b.tempoEntrega || 0)
-          break
-      }
-
-      return sortOrder === "asc" ? comparison : -comparison
-    })
-
-    return filtered
-  }, [
-    allOrders,
-    searchQuery,
-    filterStatus,
-    filterBairro,
-    filterEntregador,
-    filterTipoBotija,
-    filterMetodoPagamento,
-    filterPriceMin,
-    filterPriceMax,
-    filterDateStart,
-    filterDateEnd,
-    sortBy,
-    sortOrder,
-  ])
-
-  const totalPages = Math.ceil(filteredAndSortedOrders.length / pageSize)
-  const paginatedOrders = filteredAndSortedOrders.slice((currentPage - 1) * pageSize, currentPage * pageSize)
-
-  // Reset to page 1 when filters change
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [
-    searchQuery,
-    filterStatus,
-    filterBairro,
-    filterEntregador,
-    filterTipoBotija,
-    filterMetodoPagamento,
-    filterPriceMin,
-    filterPriceMax,
-    filterDateStart,
-    filterDateEnd,
-    pageSize,
-  ])
-
-  const handleAcceptOrder = (orderId: string) => {
-    setAllOrders(
-      allOrders.map((order) => (order.id === orderId ? { ...order, status: "aceito", updatedAt: new Date() } : order)),
-    )
-
-    sendMessage({
-      type: "order_status_changed",
-      data: { orderId, status: "aceito" },
-    })
-
-    toast({
-      title: "Pedido aceito",
-      description: `Pedido #${orderId} foi aceito com sucesso.`,
-    })
-  }
-
-  const handleForwardOrder = () => {
-    if (selectedOrder && selectedDeliveryPerson) {
-      setAllOrders(
-        allOrders.map((order) =>
-          order.id === selectedOrder.id
-            ? { ...order, status: "em_entrega", entregador: selectedDeliveryPerson, updatedAt: new Date() }
-            : order,
-        ),
-      )
-
-      sendMessage({
-        type: "order_status_changed",
-        data: { orderId: selectedOrder.id, status: "em_entrega", entregador: selectedDeliveryPerson },
-      })
-
-      toast({
-        title: "Pedido encaminhado",
-        description: `Pedido #${selectedOrder.id} encaminhado para ${selectedDeliveryPerson}`,
-      })
-      setIsForwardDialogOpen(false)
-      setSelectedOrder(null)
-      setSelectedDeliveryPerson("")
-    }
-  }
-
-  const handleCompleteOrder = (orderId: string) => {
-    setAllOrders(
-      allOrders.map((order) =>
-        order.id === orderId
-          ? { ...order, status: "entregue", updatedAt: new Date(), tempoEntrega: Math.floor(Math.random() * 60) + 15 }
-          : order,
-      ),
-    )
-
-    sendMessage({
-      type: "order_status_changed",
-      data: { orderId, status: "entregue" },
-    })
-
-    toast({
-      title: "Entrega concluída",
-      description: `Pedido #${orderId} foi marcado como entregue.`,
-    })
-  }
-
+  // selection helpers
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedOrders(new Set(paginatedOrders.map((o) => o.id)))
+      setSelectedOrders(new Set(ordersForRender.map((o) => o.id)))
     } else {
       setSelectedOrders(new Set())
     }
@@ -410,79 +181,54 @@ export default function PedidosPage() {
 
   const handleSelectOrder = (orderId: string, checked: boolean) => {
     const newSelected = new Set(selectedOrders)
-    if (checked) {
-      newSelected.add(orderId)
-    } else {
-      newSelected.delete(orderId)
-    }
+    if (checked) newSelected.add(orderId)
+    else newSelected.delete(orderId)
     setSelectedOrders(newSelected)
   }
 
-  const handleBulkAction = (action: "aceitar" | "cancelar" | "exportar") => {
-    if (selectedOrders.size === 0) {
-      toast({
-        title: "Nenhum pedido selecionado",
-        description: "Selecione pelo menos um pedido para realizar esta ação.",
-        variant: "destructive",
-      })
-      return
-    }
-
-    switch (action) {
-      case "aceitar":
-        setAllOrders(
-          allOrders.map((order) =>
-            selectedOrders.has(order.id) && order.status === "pendente"
-              ? { ...order, status: "aceito", updatedAt: new Date() }
-              : order,
-          ),
-        )
-        // Send WebSocket messages for bulk acceptance
-        selectedOrders.forEach((orderId) => {
-          sendMessage({
-            type: "order_status_changed",
-            data: { orderId, status: "aceito" },
-          })
-        })
-        toast({
-          title: "Pedidos aceitos",
-          description: `${selectedOrders.size} pedido(s) aceito(s) com sucesso.`,
-        })
-        setSelectedOrders(new Set())
-        break
-      case "cancelar":
-        setAllOrders(
-          allOrders.map((order) =>
-            selectedOrders.has(order.id) ? { ...order, status: "cancelado", updatedAt: new Date() } : order,
-          ),
-        )
-        // Send WebSocket messages for bulk cancellation
-        selectedOrders.forEach((orderId) => {
-          sendMessage({
-            type: "order_status_changed",
-            data: { orderId, status: "cancelado" },
-          })
-        })
-        toast({
-          title: "Pedidos cancelados",
-          description: `${selectedOrders.size} pedido(s) cancelado(s).`,
-        })
-        setSelectedOrders(new Set())
-        break
-      case "exportar":
-        handleExportCSV()
-        break
+  // Atualizar status com PUT no backend (atualização otimista)
+  const handleUpdateOrderStatus = async (pedidoId: string, newStatus: "pendente" | "confirmado" | "entregue" | "cancelado") => {
+    const prev = pedidos
+    // otimista: atualizar no estado
+    setPedidos((cur) => cur.map((p) => (p._id === pedidoId ? { ...p, status: newStatus } : p)))
+    try {
+      await pedidoService.updatePedidoStatus(pedidoId, { status: newStatus })
+      toast({ title: "Status atualizado", description: `Pedido atualizado para ${newStatus}.` })
+    } catch (err: any) {
+      // rollback
+      setPedidos(prev)
+      toast({ title: "Erro ao atualizar status", description: err?.message ?? String(err), variant: "destructive" })
+      console.error("Erro ao atualizar status:", err)
     }
   }
 
-  const handleExportCSV = () => {
-    const ordersToExport =
-      selectedOrders.size > 0
-        ? filteredAndSortedOrders.filter((o) => selectedOrders.has(o.id))
-        : filteredAndSortedOrders
+  const handleAcceptOrder = (orderId: string) => {
+    // encontrar o _id do pedido no array
+    const pedido = pedidos.find((p) => p.codigoPedido === orderId)
+    if (!pedido) return
+    handleUpdateOrderStatus(pedido._id, "confirmado")
+  }
 
-    const headers = ["ID", "Cliente", "Telefone", "Bairro", "Valor", "Status", "Método Pagamento", "Data", "Entregador"]
-    const rows = ordersToExport.map((order) => [
+  const handleForwardOrder = () => {
+    if (!selectedOrder || !selectedDeliveryPerson) return
+    const pedido = pedidos.find((p) => p.codigoPedido === selectedOrder.codigoPedido)
+    if (!pedido) return
+    // nota: o status aqui pode ser "entregue" ou um status intermediário; ajuste conforme seu modelo
+    // por agora, vamos apenas confirmar que foi encaminhado (que já foi confirmado)
+    // se quiser um status separado "em_entrega", adicione ao backend
+    toast({ title: "Pedido encaminhado", description: `Pedido #${selectedOrder.codigoPedido} encaminhado para ${selectedDeliveryPerson}.` })
+    setIsForwardDialogOpen(false)
+    setSelectedOrder(null)
+  }
+
+  const handleCompleteOrder = (orderId: string) => {
+    const pedido = pedidos.find((p) => p.codigoPedido === orderId)
+    if (!pedido) return
+    handleUpdateOrderStatus(pedido._id, "entregue")
+  }
+
+  const handleExportCSV = () => {
+    const rows = ordersForRender.map((order) => [
       order.id,
       order.cliente,
       order.telefone,
@@ -493,8 +239,8 @@ export default function PedidosPage() {
       order.createdAt.toLocaleDateString("pt-AO"),
       order.entregador || "-",
     ])
-
-    const csv = [headers, ...rows].map((row) => row.join(",")).join("\n")
+    const headers = ["ID", "Cliente", "Telefone", "Bairro", "Valor", "Status", "Método Pagamento", "Data", "Entregador"]
+    const csv = [headers, ...rows].map((r) => r.join(",")).join("\n")
     const blob = new Blob([csv], { type: "text/csv" })
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
@@ -502,34 +248,15 @@ export default function PedidosPage() {
     a.download = `pedidos-${new Date().toISOString().split("T")[0]}.csv`
     a.click()
     URL.revokeObjectURL(url)
-
-    toast({
-      title: "Exportação concluída",
-      description: `${ordersToExport.length} pedido(s) exportado(s) para CSV.`,
-    })
-  }
-
-  const handleClearFilters = () => {
-    setSearchQuery("")
-    setFilterStatus("all")
-    setFilterBairro("all")
-    setFilterEntregador("all")
-    setFilterTipoBotija("all")
-    setFilterMetodoPagamento("all")
-    setFilterPriceMin("")
-    setFilterPriceMax("")
-    setFilterDateStart("")
-    setFilterDateEnd("")
+    toast({ title: "Exportação concluída", description: `${rows.length} pedido(s) exportado(s)` })
   }
 
   const getStatusConfig = (status: Order["status"]) => {
     switch (status) {
       case "pendente":
         return { label: "Pendente", variant: "destructive" as const, icon: "schedule" }
-      case "aceito":
+      case "confirmado":
         return { label: "Aceito", variant: "default" as const, icon: "check_circle" }
-      case "em_entrega":
-        return { label: "Em Entrega", variant: "secondary" as const, icon: "local_shipping" }
       case "entregue":
         return { label: "Entregue", variant: "outline" as const, icon: "done_all" }
       case "cancelado":
@@ -548,9 +275,7 @@ export default function PedidosPage() {
     }
   }
 
-  const filterOrders = (status: Order["status"]) => allOrders.filter((o) => o.status === status)
-  const pendingOrdersCount = filterOrders("pendente").length
-
+  // OrderCard component
   const OrderCard = ({ order }: { order: Order }) => {
     const statusConfig = getStatusConfig(order.status)
     const isSelected = selectedOrders.has(order.id)
@@ -564,15 +289,10 @@ export default function PedidosPage() {
         )}
       >
         <div className="flex items-start gap-4">
-          <Checkbox
-            checked={isSelected}
-            onCheckedChange={(checked) => handleSelectOrder(order.id, checked as boolean)}
-          />
-
+          <Checkbox checked={isSelected} onCheckedChange={(checked) => handleSelectOrder(order.id, checked as boolean)} />
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10">
             <MaterialIcon icon={statusConfig.icon} className="text-2xl text-primary" />
           </div>
-
           <div className="flex-1 space-y-2">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="font-semibold">Pedido #{order.id}</h3>
@@ -609,48 +329,22 @@ export default function PedidosPage() {
           </div>
 
           <div className="flex flex-col gap-2">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                setSelectedOrder(order)
-                setIsDetailsDialogOpen(true)
-              }}
-            >
+            <Button size="sm" variant="ghost" onClick={() => { setSelectedOrder(order); setIsDetailsDialogOpen(true) }}>
               <MaterialIcon icon="visibility" />
             </Button>
             {order.status === "pendente" && (
               <>
-                <Button size="sm" onClick={() => handleAcceptOrder(order.id)}>
-                  <MaterialIcon icon="check" />
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setSelectedOrder(order)
-                    setIsForwardDialogOpen(true)
-                  }}
-                >
+                <Button size="sm" onClick={() => handleAcceptOrder(order.id)}><MaterialIcon icon="check" /></Button>
+                <Button size="sm" variant="outline" onClick={() => { setSelectedOrder(order); setIsForwardDialogOpen(true) }}>
                   <MaterialIcon icon="send" />
                 </Button>
               </>
             )}
-            {order.status === "aceito" && (
-              <Button
-                size="sm"
-                onClick={() => {
-                  setSelectedOrder(order)
-                  setIsForwardDialogOpen(true)
-                }}
-              >
-                <MaterialIcon icon="local_shipping" />
-              </Button>
+            {order.status === "confirmado" && (
+              <Button size="sm" onClick={() => { setSelectedOrder(order); setIsForwardDialogOpen(true) }}><MaterialIcon icon="local_shipping" /></Button>
             )}
-            {order.status === "em_entrega" && (
-              <Button size="sm" onClick={() => handleCompleteOrder(order.id)}>
-                <MaterialIcon icon="done_all" />
-              </Button>
+            {order.status === "confirmado" && (
+              <Button size="sm" onClick={() => handleCompleteOrder(order.id)}><MaterialIcon icon="done_all" /></Button>
             )}
           </div>
         </div>
@@ -661,46 +355,33 @@ export default function PedidosPage() {
   return (
     <div className="flex flex-col">
       <AppHeader title="Pedidos" />
-
       <div className="flex-1 space-y-6 p-6">
-
-
-        {/* Stats */}
+        {/* Stats: counts calculated from current 'pedidos' page (for global counts you'd fetch a dashboard endpoint) */}
         <div className="grid gap-4 md:grid-cols-5">
           <Card className="transition-all hover:shadow-lg">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Pendentes</CardTitle>
               <div className="relative">
                 <MaterialIcon icon="schedule" className="text-destructive" />
-                {pendingOrdersCount > 0 && (
+                {pedidos.filter((p) => p.status === "pendente").length > 0 && (
                   <span className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-xs text-destructive-foreground">
-                    {pendingOrdersCount}
+                    {pedidos.filter((p) => p.status === "pendente").length}
                   </span>
                 )}
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{filterOrders("pendente").length}</div>
+              <div className="text-2xl font-bold">{pedidos.filter((p) => p.status === "pendente").length}</div>
             </CardContent>
           </Card>
 
           <Card className="transition-all hover:shadow-lg">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Aceitos</CardTitle>
+              <CardTitle className="text-sm font-medium">Confirmados</CardTitle>
               <MaterialIcon icon="check_circle" className="text-primary" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{filterOrders("aceito").length}</div>
-            </CardContent>
-          </Card>
-
-          <Card className="transition-all hover:shadow-lg">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Em Entrega</CardTitle>
-              <MaterialIcon icon="local_shipping" className="text-chart-2" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{filterOrders("em_entrega").length}</div>
+              <div className="text-2xl font-bold">{pedidos.filter((p) => p.status === "confirmado").length}</div>
             </CardContent>
           </Card>
 
@@ -710,7 +391,7 @@ export default function PedidosPage() {
               <MaterialIcon icon="done_all" className="text-chart-4" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{filterOrders("entregue").length}</div>
+              <div className="text-2xl font-bold">{pedidos.filter((p) => p.status === "entregue").length}</div>
             </CardContent>
           </Card>
 
@@ -720,7 +401,7 @@ export default function PedidosPage() {
               <MaterialIcon icon="cancel" className="text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{filterOrders("cancelado").length}</div>
+              <div className="text-2xl font-bold">{pedidos.filter((p) => p.status === "cancelado").length}</div>
             </CardContent>
           </Card>
         </div>
@@ -732,18 +413,12 @@ export default function PedidosPage() {
               <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                 <div>
                   <CardTitle>Gestão de Pedidos</CardTitle>
-                  <CardDescription>
-                    {filteredAndSortedOrders.length} pedido(s) encontrado(s)
-                    {selectedOrders.size > 0 && ` • ${selectedOrders.size} selecionado(s)`}
-                  </CardDescription>
+                  <CardDescription>{totalItems} pedido(s) encontrado(s) • Página {pedidoFilters.page} / {pedidosPagination?.pages ?? 1}</CardDescription>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <WebSocketStatus />
                   <Button variant="outline" size="sm" onClick={() => setShowFilters(!showFilters)}>
                     <MaterialIcon icon="filter_list" className="mr-2" />
                     Filtros
-                    {showFilters && <MaterialIcon icon="expand_less" className="ml-2" />}
-                    {!showFilters && <MaterialIcon icon="expand_more" className="ml-2" />}
                   </Button>
                   <Button variant="outline" size="sm" onClick={handleExportCSV}>
                     <MaterialIcon icon="download" className="mr-2" />
@@ -752,36 +427,30 @@ export default function PedidosPage() {
                 </div>
               </div>
 
-              {/* Search and Quick Filters */}
               <div className="flex flex-col gap-2 md:flex-row">
                 <div className="relative flex-1">
-                  <MaterialIcon
-                    icon="search"
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                  />
-                  <Input
-                    placeholder="Pesquisar por cliente, telefone, ID ou bairro..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-10"
-                  />
+                  <MaterialIcon icon="search" className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <Input placeholder="Pesquisar (não aplicado no servidor)" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-10" />
                 </div>
-                <Select value={filterStatus} onValueChange={(value: any) => setFilterStatus(value)}>
+
+                {/* Código do Pedido - usado no endpoint */}
+                <Input placeholder="Código do Pedido" value={codigoPedidoInput} onChange={(e) => setCodigoPedidoInput(e.target.value)} className="md:w-[200px]" />
+                <Button size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: 1, codigoPedido: codigoPedidoInput || undefined }))}>Buscar</Button>
+
+                <Select value={filterStatus} onValueChange={(value: any) => { setFilterStatus(value); setPedidoFilters((f) => ({ ...f, page: 1, status: value === "all" ? undefined : value })) }}>
                   <SelectTrigger className="w-full md:w-[180px]">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Todos Status</SelectItem>
                     <SelectItem value="pendente">Pendentes</SelectItem>
-                    <SelectItem value="aceito">Aceitos</SelectItem>
-                    <SelectItem value="em_entrega">Em Entrega</SelectItem>
+                    <SelectItem value="confirmado">Confirmados</SelectItem>
                     <SelectItem value="entregue">Entregues</SelectItem>
                     <SelectItem value="cancelado">Cancelados</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
-              {/* Advanced Filters */}
               {showFilters && (
                 <div className="space-y-4 rounded-lg border p-4">
                   <div className="flex items-center justify-between">
@@ -939,89 +608,47 @@ export default function PedidosPage() {
             </div>
           </CardHeader>
           <CardContent>
-            {paginatedOrders.length === 0 ? (
+            {ordersForRender.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <MaterialIcon icon="shopping_cart" className="mb-4 text-5xl text-muted-foreground" />
                 <p className="text-muted-foreground">Nenhum pedido encontrado</p>
-                {(searchQuery || filterStatus !== "all" || showFilters) && (
-                  <Button variant="link" onClick={handleClearFilters} className="mt-2">
-                    Limpar filtros
-                  </Button>
-                )}
+                <Button variant="link" onClick={() => { setPedidoFilters({ page:1, limit: pedidoFilters.limit }); setCodigoPedidoInput(""); }}>Recarregar</Button>
               </div>
             ) : (
               <>
                 <div className="mb-4 flex items-center gap-2">
-                  <Checkbox
-                    checked={paginatedOrders.length > 0 && paginatedOrders.every((o) => selectedOrders.has(o.id))}
-                    onCheckedChange={handleSelectAll}
-                  />
+                  <Checkbox checked={ordersForRender.length > 0 && ordersForRender.every((o) => selectedOrders.has(o.id))} onCheckedChange={handleSelectAll} />
                   <span className="text-sm text-muted-foreground">Selecionar todos nesta página</span>
                 </div>
 
                 <div className="space-y-4">
-                  {paginatedOrders.map((order) => (
-                    <OrderCard key={order.id} order={order} />
-                  ))}
+                  {ordersForRender.map((order) => <OrderCard key={order.id} order={order} />)}
                 </div>
 
-                {/* Pagination */}
-                {totalPages > 1 && (
+                {/* Pagination (server-driven) */}
+                { (pedidosPagination?.pages ?? 1) > 1 && (
                   <div className="mt-6 flex flex-col gap-4 border-t border-border pt-4 md:flex-row md:items-center md:justify-between">
                     <div className="flex items-center gap-2">
                       <Label>Itens por página:</Label>
-                      <Select value={pageSize.toString()} onValueChange={(value) => setPageSize(Number(value))}>
-                        <SelectTrigger className="w-[100px]">
-                          <SelectValue />
-                        </SelectTrigger>
+                      <Select value={String(pedidoFilters.limit)} onValueChange={(value) => setPedidoFilters((f) => ({ ...f, limit: Number(value), page: 1 }))}>
+                        <SelectTrigger className="w-[100px]"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="10">10</SelectItem>
                           <SelectItem value="20">20</SelectItem>
                           <SelectItem value="50">50</SelectItem>
-                          <SelectItem value="100">100</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
 
                     <p className="text-sm text-muted-foreground">
-                      Página {currentPage} de {totalPages} • {filteredAndSortedOrders.length} pedido(s) total
+                      Página {pedidoFilters.page} de {pedidosPagination?.pages ?? 1} • {pedidosPagination?.total ?? pedidos.length} pedido(s) total
                     </p>
 
                     <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setCurrentPage(1)}
-                        disabled={currentPage === 1}
-                      >
-                        <MaterialIcon icon="first_page" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                        disabled={currentPage === 1}
-                      >
-                        <MaterialIcon icon="chevron_left" className="mr-1" />
-                        Anterior
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                        disabled={currentPage === totalPages}
-                      >
-                        Próxima
-                        <MaterialIcon icon="chevron_right" className="ml-1" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setCurrentPage(totalPages)}
-                        disabled={currentPage === totalPages}
-                      >
-                        <MaterialIcon icon="last_page" />
-                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: 1 }))} disabled={pedidoFilters.page === 1}><MaterialIcon icon="first_page" /></Button>
+                      <Button variant="outline" size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: Math.max(1, f.page - 1) }))} disabled={pedidoFilters.page === 1}><MaterialIcon icon="chevron_left" className="mr-1" />Anterior</Button>
+                      <Button variant="outline" size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: Math.min((pedidosPagination?.pages ?? 1), f.page + 1) }))} disabled={pedidoFilters.page === (pedidosPagination?.pages ?? 1)}>Próxima<MaterialIcon icon="chevron_right" className="ml-1" /></Button>
+                      <Button variant="outline" size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: pedidosPagination?.pages ?? f.page }))} disabled={pedidoFilters.page === (pedidosPagination?.pages ?? 1)}><MaterialIcon icon="last_page" /></Button>
                     </div>
                   </div>
                 )}
