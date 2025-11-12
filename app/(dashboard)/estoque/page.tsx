@@ -228,7 +228,7 @@ export default function EstoquePage() {
         }
       }
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3333"}/empresas/produto-empresa-with-produto`,
+        `${process.env.NEXT_PUBLIC_API_URL || "https://talagas-api.onrender.com"}/empresas/produto-empresa-with-produto`,
         {
           method: "POST",
           headers: {
@@ -287,7 +287,7 @@ export default function EstoquePage() {
           formData.append("files", file)
         }
         res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3333"}/empresas/produto-empresa-with-produto/${editForm.id}`,
+          `${process.env.NEXT_PUBLIC_API_URL || "https://talagas-api.onrender.com"}/empresas/produto-empresa-with-produto/${editForm.id}`,
           {
             method: "PUT",
             headers: {
@@ -301,7 +301,7 @@ export default function EstoquePage() {
         )
       } else {
         res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3333"}/empresas/produto-empresa-with-produto/${editForm.id}`,
+          `${process.env.NEXT_PUBLIC_API_URL || "https://talagas-api.onrender.com"}/empresas/produto-empresa-with-produto/${editForm.id}`,
           {
             method: "PUT",
             headers: {

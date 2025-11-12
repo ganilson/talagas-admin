@@ -98,7 +98,7 @@ export default function TransportadoresPage() {
         formData.append("genero", addForm.genero)
         formData.append("dataDeNascimento", addForm.dataDeNascimento)
         formData.append("files", addForm.foto)
-        res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3333"}/empresas/transportadores`, {
+        res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://talagas-api.onrender.com"}/empresas/transportadores`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}")?.token || "" : ""}`,
@@ -107,7 +107,7 @@ export default function TransportadoresPage() {
         })
       } else {
         // Sem arquivo, envia JSON
-        res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3333"}/empresas/transportadores`, {
+        res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://talagas-api.onrender.com"}/empresas/transportadores`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -160,7 +160,7 @@ export default function TransportadoresPage() {
         formData.append("genero", editForm.genero)
         formData.append("dataDeNascimento", editForm.dataDeNascimento)
         formData.append("files", editForm.foto)
-        res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3333"}/empresas/transportadores/${editTransportador._id}`, {
+        res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://talagas-api.onrender.com"}/empresas/transportadores/${editTransportador._id}`, {
           method: "PUT",
           headers: {
             Authorization: `Bearer ${typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}")?.token || "" : ""}`,
@@ -168,7 +168,7 @@ export default function TransportadoresPage() {
           body: formData,
         })
       } else {
-        res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3333"}/empresas/transportadores/${editTransportador._id}`, {
+        res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://talagas-api.onrender.com"}/empresas/transportadores/${editTransportador._id}`, {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
