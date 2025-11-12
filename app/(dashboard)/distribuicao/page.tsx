@@ -31,6 +31,9 @@ type PontoVenda = {
   lat?: number
   lng?: number
   qrCodeLink?: string
+  isActive?: boolean
+  createdAt?: string
+  updatedAt?: string
 }
 
 const QR_SIZE = 300
@@ -80,11 +83,14 @@ export default function DistribuicaoPage() {
         const mapped = raw.map((r) => ({
           id: r._id,
           nome: r.descricao,
-          endereco: undefined,
-          telefone: undefined,
+          endereco: r.endereco,
+          telefone: r.telefone,
           lat: r.coordinates?.coordinates?.[0],
           lng: r.coordinates?.coordinates?.[1],
           qrCodeLink: r.qrCodeLink,
+          isActive: r.isActive,
+          createdAt: r.createdAt,
+          updatedAt: r.updatedAt,
           // manter raw se precisar
         }))
         setPontos(mapped)
@@ -384,24 +390,32 @@ export default function DistribuicaoPage() {
     return new Blob([u8arr], { type: mime })
   }
 
+  // Baixar todos os QRs: nome do arquivo = nome do ponto (slug) + id
+  const slugify = (str: string) =>
+    str
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .toLowerCase()
+
   const downloadAllAsZip = async () => {
     if (pontos.length === 0) {
       toast({ title: "Nenhum ponto cadastrado", variant: "destructive" })
       return
     }
-
     const zip = new JSZip()
-
     for (const p of pontos) {
       try {
         const dataUrl = await QRCode.toDataURL(payloadFor(p), { width: QR_SIZE })
         const blob = dataURLToBlob(dataUrl)
-        zip.file(`qr-${p.id}.png`, blob)
+        // Nome do arquivo: nome-do-ponto_id.png
+        const nomeArquivo = `${slugify(p.nome)}_${p.id}.png`
+        zip.file(nomeArquivo, blob)
       } catch (err) {
         console.error("Erro gerando QR localmente:", err)
       }
     }
-
     try {
       const content = await zip.generateAsync({ type: "blob" })
       const url = URL.createObjectURL(content)
@@ -513,142 +527,27 @@ export default function DistribuicaoPage() {
   }, [selectedPoint])
 
   return (
-    <div className="p-6">
-      <div className="mb-6 flex items-center justify-between">
+    <div className="p-6 max-w-7xl mx-auto">
+      <div className="mb-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Distribuição — Pontos de Venda</h1>
-          <p className="text-sm text-muted-foreground">Cadastre pontos de venda e gere códigos QR para cada um.</p>
+          <h1 className="text-3xl font-bold">Distribuição — Pontos de Venda</h1>
+          <p className="text-base text-muted-foreground mt-1">
+            Cadastre pontos de venda, visualize no mapa e gere códigos QR personalizados para cada local.
+          </p>
         </div>
-        <div className="flex items-center gap-2">
-          {/* botão para abrir modal gigante do mapa */}
-          <Dialog open={isMapOpen} onOpenChange={setIsMapOpen}>
-            <DialogTrigger asChild>
-              <Button variant="outline">Abrir Mapa (Modal)</Button>
-            </DialogTrigger>
-
-            <DialogPortal>
-              {/* Overlay (escurece o fundo) */}
-              <DialogOverlay className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40" />
-
-              {/* Content centralizado corretamente */}
-              <DialogContent className="max-w-[95vw] h-[95vh] overflow-hidden">
-                <DialogHeader>
-                  <DialogTitle>Mapa de Pontos de Venda</DialogTitle>
-                  <DialogDescription>
-                    Mapa gigante com todos os pontos cadastrados
-                  </DialogDescription>
-                </DialogHeader>
-
-                {/* layout: map (esquerda) + painel lateral (direita) dentro da modal */}
-                <div className="h-[calc(95vh-180px)] w-full rounded-md border overflow-hidden flex gap-4">
-                  <div className="flex-1">
-                    <div ref={mapMainRef} className="h-full w-full" />
-                  </div>
-
-                  <div className="w-80 border-l bg-white p-4 overflow-auto">
-                    <div className="flex items-start justify-between mb-2">
-                      <div>
-                        <h3 className="text-lg font-semibold">{selectedPoint?.nome ?? "Detalhes"}</h3>
-                        <div className="text-sm text-muted-foreground">{selectedPoint?.endereco ?? "-"}</div>
-                      </div>
-                      <div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            // fechar painel / limpar seleção
-                            setIsMapOpen(false);
-                          }}
-                        >
-                          Fechar
-                        </Button>
-                      </div>
-                    </div>
-
-                    {selectedPoint ? (
-                      <div className="space-y-3">
-                        {/* vista + edição */}
-                        <div className="flex items-center gap-3">
-                          <img src="/simbolo.png" alt="Talagas" className="h-12 w-12 rounded" />
-                          <div>
-                            <div className="font-medium">{selectedPoint?.nome}</div>
-                            <div className="text-sm text-muted-foreground">{selectedPoint?.telefone ?? "-"}</div>
-                          </div>
-                        </div>
-
-                        {!editingSide ? (
-                          <div className="text-sm">
-                            <div><strong>Endereço:</strong> {selectedPoint?.endereco ?? "-"}</div>
-                            <div><strong>Lat / Lng:</strong> {selectedPoint?.lat ?? "-"} • {selectedPoint?.lng ?? "-"}</div>
-                            <div className="mt-2 flex gap-2">
-                              <Button size="sm" onClick={() => setEditingSide(true)}>Editar</Button>
-                              <Button size="sm" onClick={async () => {
-                                try {
-                                  const dataUrl = qrCache[selectedPoint.id] ?? await QRCode.toDataURL(payloadFor(selectedPoint), { width: QR_SIZE })
-                                  const a = document.createElement("a")
-                                  a.href = dataUrl
-                                  a.download = `qr-${selectedPoint.id}.png`
-                                  document.body.appendChild(a)
-                                  a.click()
-                                  a.remove()
-                                } catch (err) {
-                                  console.error(err)
-                                }
-                              }}>Baixar PNG</Button>
-                              <Button size="sm" variant="destructive" onClick={() => { removePonto(selectedPoint.id); setSelectedPoint(null) }}>Remover</Button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="space-y-3">
-                            <div>
-                              <Label>Descrição</Label>
-                              <Input value={sideForm.descricao} onChange={(e) => setSideForm((s) => ({ ...s, descricao: e.target.value }))} />
-                            </div>
-                            <div>
-                              <Label>Lat</Label>
-                              <Input type="number" value={sideForm.lat ?? ""} onChange={(e) => setSideForm((s) => ({ ...s, lat: Number(e.target.value) }))} />
-                            </div>
-                            <div>
-                              <Label>Lng</Label>
-                              <Input type="number" value={sideForm.lng ?? ""} onChange={(e) => setSideForm((s) => ({ ...s, lng: Number(e.target.value) }))} />
-                            </div>
-                            <div className="flex gap-2">
-                              <Button size="sm" onClick={handleSaveSideEdit}>Salvar</Button>
-                              <Button size="sm" variant="outline" onClick={() => setEditingSide(false)}>Cancelar</Button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="text-sm text-muted-foreground">Clique em um marker para ver detalhes</div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Footer */}
-                <div className="p-3 border-t">
-                  <DialogFooter className="p-0">
-                    <div className="flex justify-end">
-                      <Button variant="ghost" onClick={() => setIsMapOpen(false)}>Fechar</Button>
-                    </div>
-                  </DialogFooter>
-                </div>
-              </DialogContent>
-            </DialogPortal>
-          </Dialog>
-
-
+        <div className="flex flex-wrap gap-2">
           <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
             <DialogTrigger asChild>
               <Button>Adicionar Ponto</Button>
             </DialogTrigger>
-            <DialogContent className="max-w-[90vw] h-[90vh] overflow-hidden flex flex-col">
+            <DialogContent className="max-w-xl w-full">
               <DialogHeader>
                 <DialogTitle>Adicionar Ponto de Venda</DialogTitle>
-                <DialogDescription>Preencha os dados e selecione a localização no mapa (clique no mapa).</DialogDescription>
+                <DialogDescription>
+                  Preencha os dados e selecione a localização no mapa (clique no mapa).
+                </DialogDescription>
               </DialogHeader>
-
-              <form onSubmit={handleAddSubmit} className="space-y-4 flex-1 overflow-auto p-4">
+              <form onSubmit={handleAddSubmit} className="space-y-4">
                 <div>
                   <Label htmlFor="nome">Nome</Label>
                   <Input id="nome" value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Loja Exemplo" />
@@ -661,7 +560,6 @@ export default function DistribuicaoPage() {
                   <Label htmlFor="telefone">Telefone</Label>
                   <Input id="telefone" value={telefone} onChange={(e) => setTelefone(e.target.value)} placeholder="(xx) 9xxxx-xxxx" />
                 </div>
-
                 <div>
                   <div className="flex items-center gap-2 mb-2">
                     <Button type="button" variant="outline" onClick={handleUseMyLocation}>Usar minha localização</Button>
@@ -670,7 +568,6 @@ export default function DistribuicaoPage() {
                   <div className="h-64 w-full rounded-md border" ref={mapRef} />
                   <div className="mt-2 text-sm text-muted-foreground">Latitude: {lat ?? '-'} • Longitude: {lng ?? '-'}</div>
                 </div>
-
                 <DialogFooter>
                   <div className="flex items-center gap-2">
                     <Button type="submit">Salvar</Button>
@@ -682,41 +579,117 @@ export default function DistribuicaoPage() {
               </form>
             </DialogContent>
           </Dialog>
-          {/* botão para abrir modal com todos os pontos em cards */}
+          <Dialog open={isMapOpen} onOpenChange={setIsMapOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline">Abrir Mapa</Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-[95vw] h-[90vh] overflow-hidden p-0">
+              <DialogHeader>
+                <DialogTitle>Mapa de Pontos de Venda</DialogTitle>
+                <DialogDescription>
+                  Visualize todos os pontos cadastrados no mapa interativo.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="h-[70vh] w-full rounded-md border overflow-hidden flex gap-4 bg-white">
+                <div className="flex-1">
+                  <div ref={mapMainRef} className="h-full w-full" />
+                </div>
+                <div className="w-96 border-l bg-white p-4 overflow-auto">
+                  <div className="flex items-start justify-between mb-2">
+                    <div>
+                      <h3 className="text-lg font-semibold">{selectedPoint?.nome ?? "Detalhes"}</h3>
+                      <div className="text-sm text-muted-foreground">{selectedPoint?.endereco ?? "-"}</div>
+                    </div>
+                    <Button variant="ghost" size="sm" onClick={() => { setSideOpen(false); setSelectedPoint(null) }}>Fechar</Button>
+                  </div>
+                  {selectedPoint ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3">
+                        <img src="/simbolo.png" alt="Talagas" className="h-12 w-12 rounded" />
+                        <div>
+                          <div className="font-medium">{selectedPoint?.nome}</div>
+                          <div className="text-sm text-muted-foreground">{selectedPoint?.telefone ?? "-"}</div>
+                        </div>
+                      </div>
+                      <div className="text-sm">
+                        <div><strong>Endereço:</strong> {selectedPoint?.endereco ?? "-"}</div>
+                        <div><strong>Lat / Lng:</strong> {selectedPoint?.lat ?? "-"} • {selectedPoint?.lng ?? "-"}</div>
+                        <div><strong>Status:</strong> {selectedPoint?.isActive ? "Ativo" : "Inativo"}</div>
+                        <div><strong>Criado em:</strong> {selectedPoint?.createdAt ? new Date(selectedPoint.createdAt).toLocaleString("pt-AO") : "-"}</div>
+                        <div><strong>Atualizado em:</strong> {selectedPoint?.updatedAt ? new Date(selectedPoint.updatedAt).toLocaleString("pt-AO") : "-"}</div>
+                      </div>
+                      <div>
+                        <div className="font-medium mb-2">QR Code</div>
+                        {qrCache[selectedPoint.id] ? (
+                          <img src={qrCache[selectedPoint.id]} alt="QR" className="w-full h-auto border" />
+                        ) : (
+                          <div className="text-sm text-muted-foreground">Gerando QR...</div>
+                        )}
+                        <div className="mt-2 flex gap-2">
+                          <Button size="sm" onClick={async () => {
+                            try {
+                              const dataUrl = qrCache[selectedPoint.id] ?? await QRCode.toDataURL(payloadFor(selectedPoint), { width: QR_SIZE })
+                              const a = document.createElement("a")
+                              a.href = dataUrl
+                              a.download = `${slugify(selectedPoint.nome)}_${selectedPoint.id}.png`
+                              document.body.appendChild(a)
+                              a.click()
+                              a.remove()
+                            } catch (err) { console.error(err) }
+                          }}>Baixar PNG</Button>
+                          <Button size="sm" variant="destructive" onClick={() => {
+                            removePonto(selectedPoint.id)
+                            setSelectedPoint(null)
+                          }}>Remover</Button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-muted-foreground">Clique em um marker para ver detalhes</div>
+                  )}
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="ghost" onClick={() => setIsMapOpen(false)}>Fechar</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           <Dialog open={isListOpen} onOpenChange={setIsListOpen}>
             <DialogTrigger asChild>
               <Button variant="outline">Mostrar todos</Button>
             </DialogTrigger>
-            <DialogContent className="max-w-4xl">
+            <DialogContent className="max-w-5xl w-full">
               <DialogHeader>
                 <DialogTitle>Todos os Pontos de Venda</DialogTitle>
                 <DialogDescription>Visualize todos os pontos cadastrados com logo e QR code.</DialogDescription>
               </DialogHeader>
-              <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 p-2">
+              <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 p-2">
                 {pontos.length === 0 && <div className="p-4 text-sm text-muted-foreground">Nenhum ponto cadastrado</div>}
                 {pontos.map((p) => (
-                  <div key={p.id} className="rounded-lg border p-4 bg-card">
+                  <div key={p.id} className="rounded-xl border bg-white p-5 shadow-sm flex flex-col gap-3">
                     <div className="flex items-center gap-3">
                       <img src="/simbolo.png" alt="Talagas" className="h-12 w-12 rounded" />
                       <div>
-                        <div className="font-semibold">{p.nome}</div>
+                        <div className="font-semibold text-lg">{p.nome}</div>
                         <div className="text-sm text-muted-foreground">{p.endereco ?? "-"}</div>
+                        <div className="text-xs text-muted-foreground">{p.telefone ?? "-"}</div>
                       </div>
                     </div>
-                    <div className="mt-3 text-sm">
-                      <div>Telefone: {p.telefone ?? "-"}</div>
+                    <div className="text-xs text-muted-foreground">
                       <div>Lat: {p.lat ?? "-"} • Lng: {p.lng ?? "-"}</div>
+                      <div>Status: {p.isActive ? "Ativo" : "Inativo"}</div>
                     </div>
-                    <div className="mt-3 flex items-center justify-between gap-2">
+                    <div className="flex flex-col gap-2">
                       <a className={`text-sm underline ${!qrCache[p.id] ? "opacity-50 pointer-events-none" : ""}`} href={qrCache[p.id] ?? "#"} target="_blank" rel="noreferrer">Abrir QR</a>
-                      <button
-                        className="text-sm underline"
+                      <Button
+                        variant="outline"
+                        size="sm"
                         onClick={async () => {
                           try {
                             const dataUrl = qrCache[p.id] ?? await QRCode.toDataURL(payloadFor(p), { width: QR_SIZE })
                             const a = document.createElement("a")
                             a.href = dataUrl
-                            a.download = `qr-${p.id}.png`
+                            a.download = `${slugify(p.nome)}_${p.id}.png`
                             document.body.appendChild(a)
                             a.click()
                             a.remove()
@@ -726,7 +699,7 @@ export default function DistribuicaoPage() {
                         }}
                       >
                         Baixar PNG
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 ))}
@@ -736,157 +709,58 @@ export default function DistribuicaoPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          <Button onClick={downloadAllAsZip} disabled={pontos.length === 0}>
+            Baixar todos os códigos QR (ZIP)
+          </Button>
         </div>
       </div>
 
-      {/* mapa agora aberto via modal gigante (botão acima) */}
-
-      <div className="grid gap-6 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Controles</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col gap-3">
-              <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
-                <Input placeholder="Pesquisar por nome, endereço, telefone" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1) }} />
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="pageSize">Por página</Label>
-                  <select id="pageSize" value={String(pageSize)} onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1) }} className="rounded-md border px-2 py-1">
-                    <option value="6">6</option>
-                    <option value="9">9</option>
-                    <option value="12">12</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex flex-col sm:flex-row gap-2">
-                <Button onClick={downloadAllAsZip} disabled={pontos.length === 0}>
-                  Baixar todos os códigos QR (ZIP)
-                </Button>
-                <Button variant="outline" onClick={() => { setPontos([]); localStorage.removeItem("pontos_venda"); toast({ title: "Lista limpa" }) }}>
-                  Limpar todos
-                </Button>
-              </div>
-
-              <div className="text-sm text-muted-foreground">Os QR codes são gerados localmente; o ZIP é gerado no navegador.</div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
       {/* Cards view */}
-      <div className="mt-6 grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mt-8 grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
         {paginated.length === 0 && <div className="p-4 text-sm text-muted-foreground">Nenhum ponto para exibir</div>}
         {paginated.map((p) => (
-          <div key={p.id} className="rounded-lg border p-4 bg-card">
+          <div key={p.id} className="rounded-xl border bg-white p-5 shadow-sm flex flex-col gap-3">
             <div className="flex items-center gap-3">
               <img src="/simbolo.png" alt="Talagas" className="h-12 w-12 rounded" />
               <div className="flex-1">
-                <div className="font-semibold">{p.nome}</div>
+                <div className="font-semibold text-lg">{p.nome}</div>
                 <div className="text-sm text-muted-foreground">{p.endereco ?? "-"}</div>
+                <div className="text-xs text-muted-foreground">{p.telefone ?? "-"}</div>
               </div>
             </div>
-            <div className="mt-3 text-sm">
-              <div>Telefone: {p.telefone ?? "-"}</div>
+            <div className="text-xs text-muted-foreground">
               <div>Lat: {p.lat ?? "-"} • Lng: {p.lng ?? "-"}</div>
+              <div>Status: {p.isActive ? "Ativo" : "Inativo"}</div>
             </div>
-            <div className="mt-3 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <a className={`text-sm underline ${!qrCache[p.id] ? "opacity-50 pointer-events-none" : ""}`} href={qrCache[p.id] ?? "#"} target="_blank" rel="noreferrer">Abrir QR</a>
-                <button
-                  className="text-sm underline"
-                  onClick={async () => {
-                    try {
-                      const dataUrl = qrCache[p.id] ?? await QRCode.toDataURL(payloadFor(p), { width: QR_SIZE })
-                      const a = document.createElement("a")
-                      a.href = dataUrl
-                      a.download = `qr-${p.id}.png`
-                      document.body.appendChild(a)
-                      a.click()
-                      a.remove()
-                    } catch (err) {
-                      console.error(err)
-                    }
-                  }}
-                >
-                  Baixar PNG
-                </button>
-              </div>
-              <Button size="sm" variant="link" onClick={() => { removePonto(p.id); toast({ title: "Ponto removido" }) }}>Remover</Button>
+            <div className="flex flex-col gap-2">
+              <a className={`text-sm underline ${!qrCache[p.id] ? "opacity-50 pointer-events-none" : ""}`} href={qrCache[p.id] ?? "#"} target="_blank" rel="noreferrer">Abrir QR</a>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  try {
+                    const dataUrl = qrCache[p.id] ?? await QRCode.toDataURL(payloadFor(p), { width: QR_SIZE })
+                    const a = document.createElement("a")
+                    a.href = dataUrl
+                    a.download = `${slugify(p.nome)}_${p.id}.png`
+                    document.body.appendChild(a)
+                    a.click()
+                    a.remove()
+                  } catch (err) {
+                    console.error(err)
+                  }
+                }}
+              >
+                Baixar PNG
+              </Button>
+              <Button size="sm" variant="destructive" onClick={() => { removePonto(p.id); toast({ title: "Ponto removido" }) }}>Remover</Button>
             </div>
           </div>
         ))}
       </div>
 
-      {/* enquanto modal do mapa estiver aberta, escondemos o aside fixo para evitar duplicar o painel */}
-      {!isMapOpen && (
-        <aside
-          aria-hidden={!sideOpen}
-          className={`fixed right-0 top-0 h-full w-80 bg-white border-l z-50 transform transition-transform ${sideOpen ? "translate-x-0" : "translate-x-full"}`}
-        >
-          <div className="p-4 flex items-start justify-between border-b">
-            <div>
-              <h3 className="text-lg font-semibold">{selectedPoint?.nome ?? "Detalhes"}</h3>
-              <div className="text-sm text-muted-foreground">{selectedPoint?.endereco ?? "-"}</div>
-            </div>
-            <div>
-              <Button variant="ghost" onClick={() => { setSideOpen(false); setSelectedPoint(null) }}>Fechar</Button>
-            </div>
-          </div>
-          <div className="p-4 space-y-3">
-            <div className="flex items-center gap-3">
-              <img src="/simbolo.png" alt="Talagas" className="h-12 w-12 rounded" />
-              <div>
-                <div className="font-medium">{selectedPoint?.nome}</div>
-                <div className="text-sm text-muted-foreground">{selectedPoint?.telefone ?? "-"}</div>
-              </div>
-            </div>
-
-            <div className="text-sm">
-              <div><strong>Endereço:</strong> {selectedPoint?.endereco ?? "-"}</div>
-              <div><strong>Lat / Lng:</strong> {selectedPoint?.lat ?? "-"} • {selectedPoint?.lng ?? "-"}</div>
-            </div>
-
-            <div>
-              <div className="font-medium mb-2">QR Code</div>
-              {selectedPoint ? (
-                <>
-                  {qrCache[selectedPoint.id] ? (
-                    <img src={qrCache[selectedPoint.id]} alt="QR" className="w-full h-auto border" />
-                  ) : (
-                    <div className="text-sm text-muted-foreground">Gerando QR...</div>
-                  )}
-                  <div className="mt-2 flex gap-2">
-                    <Button size="sm" onClick={async () => {
-                      try {
-                        const dataUrl = qrCache[selectedPoint.id] ?? await QRCode.toDataURL(payloadFor(selectedPoint), { width: QR_SIZE })
-                        const a = document.createElement("a")
-                        a.href = dataUrl
-                        a.download = `qr-${selectedPoint.id}.png`
-                        document.body.appendChild(a)
-                        a.click()
-                        a.remove()
-                      } catch (err) {
-                        console.error(err)
-                      }
-                    }}>Baixar PNG</Button>
-                    <Button size="sm" variant="destructive" onClick={() => {
-                      if (!selectedPoint) return
-                      removePonto(selectedPoint.id)
-                      setSideOpen(false)
-                      setSelectedPoint(null)
-                    }}>Remover</Button>
-                  </div>
-                </>
-              ) : null}
-            </div>
-          </div>
-        </aside>
-      )}
-
       {/* Pagination */}
-      <div className="mt-6 flex items-center justify-center gap-3">
+      <div className="mt-8 flex items-center justify-center gap-3">
         <Button size="sm" onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage === 1}>Anterior</Button>
         <div>
           Página {currentPage} / {totalPages}

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { AppHeader } from "@/components/app-header"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { MaterialIcon } from "@/components/material-icon"
@@ -10,8 +10,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Line,
-  LineChart,
   ResponsiveContainer,
   XAxis,
   YAxis,
@@ -19,43 +17,58 @@ import {
   Cell,
 } from "recharts"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
-
-// Mock data
-const dailyOrders = [
-  { day: "Seg", pedidos: 45, entregas: 42 },
-  { day: "Ter", pedidos: 52, entregas: 50 },
-  { day: "Qua", pedidos: 48, entregas: 46 },
-  { day: "Qui", pedidos: 61, entregas: 58 },
-  { day: "Sex", pedidos: 55, entregas: 53 },
-  { day: "Sáb", pedidos: 67, entregas: 65 },
-  { day: "Dom", pedidos: 43, entregas: 41 },
-]
- 
-const revenueData = [
-  { month: "Jan", valor: 1250000 },
-  { month: "Fev", valor: 1420000 },
-  { month: "Mar", valor: 1380000 },
-  { month: "Abr", valor: 1560000 },
-  { month: "Mai", valor: 1690000 },
-  { month: "Jun", valor: 1820000 },
-]
-
-const productData = [
-  { name: "Botijão 13kg", vendas: 245, cor: "hsl(var(--chart-1))" },
-  { name: "Botijão 6kg", vendas: 132, cor: "hsl(var(--chart-2))" },
-  { name: "Botijão 20kg", vendas: 87, cor: "hsl(var(--chart-3))" },
-  { name: "Botijão 45kg", vendas: 43, cor: "hsl(var(--chart-4))" },
-]
+import { apiFetch } from "@/lib/api"
+import { Button } from "@/components/ui/button"
 
 export default function DashboardPage() {
-  const [activeChart, setActiveChart] = useState<"orders" | "revenue">("orders")
+  // KPIs
+  const [kpis, setKpis] = useState<any>(null)
+  const [showValor, setShowValor] = useState(false)
+  // Gráficos
+  const [grafico, setGrafico] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    Promise.all([
+      apiFetch<any>("/empresas/dashboard/kpis?hoje=true"),
+      apiFetch<any>("/empresas/dashboard/pedidos-grafico?hoje=true"),
+    ])
+      .then(([kpiRes, graficoRes]) => {
+        setKpis(kpiRes.data)
+        setGrafico(graficoRes.data)
+      })
+      .finally(() => setLoading(false))
+  }, [])
+
+  // Gráfico de status
+  const statusChartData =
+    grafico?.porStatus?.map((s: any) => ({
+      status:
+        s._id === "pendente"
+          ? "Pendentes"
+          : s._id === "confirmado"
+          ? "Confirmados"
+          : s._id === "entregue"
+          ? "Entregues"
+          : s._id === "cancelado"
+          ? "Cancelados"
+          : s._id,
+      total: s.total,
+    })) ?? []
+
+  // Gráfico de pedidos por mês
+  const pedidosPorMes =
+    grafico?.porMes?.map((m: any) => ({
+      mes: `${String(m._id.mes).padStart(2, "0")}/${m._id.ano}`,
+      total: m.total,
+    })) ?? []
 
   return (
     <div className="flex flex-col">
       <AppHeader title="Dashboard" />
 
       <div className="flex-1 space-y-6 p-6">
-
         {/* Stats Cards */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <Card className="transition-all hover:shadow-lg">
@@ -66,21 +79,29 @@ export default function DashboardPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">24</div>
-              <p className="text-xs text-muted-foreground">+12% em relação a ontem</p>
+              <div className="text-2xl font-bold">
+                {kpis?.totalPedidos ?? <span className="opacity-50">--</span>}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Pendentes: {kpis?.pedidosPendentes ?? "--"}
+              </p>
             </CardContent>
           </Card>
 
           <Card className="transition-all hover:shadow-lg">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Entregas Concluídas</CardTitle>
+              <CardTitle className="text-sm font-medium">Entregues</CardTitle>
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-chart-2/10">
                 <MaterialIcon icon="check_circle" className="text-chart-2" />
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">21</div>
-              <p className="text-xs text-muted-foreground">3 em andamento</p>
+              <div className="text-2xl font-bold">
+                {kpis?.pedidosEntregues ?? <span className="opacity-50">--</span>}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Cancelados: {kpis?.pedidosCancelados ?? "--"}
+              </p>
             </CardContent>
           </Card>
 
@@ -92,50 +113,71 @@ export default function DashboardPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{formatCurrency(284700)}</div>
-              <p className="text-xs text-muted-foreground">+8% em relação a ontem</p>
+              <div className="flex items-center gap-2">
+                <span className="text-2xl font-bold">
+                  {showValor
+                    ? formatCurrency(kpis?.totalValorPedidos ?? 0)
+                    : "••••••"}
+                </span>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7"
+                  onClick={() => setShowValor((v) => !v)}
+                  title={showValor ? "Ocultar valor" : "Mostrar valor"}
+                >
+                  <MaterialIcon icon={showValor ? "visibility_off" : "visibility"} />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Clique no olho para visualizar
+              </p>
             </CardContent>
           </Card>
 
           <Card className="transition-all hover:shadow-lg">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Tempo Médio</CardTitle>
+              <CardTitle className="text-sm font-medium">Transportadores</CardTitle>
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-chart-5/10">
-                <MaterialIcon icon="schedule" className="text-chart-5" />
+                <MaterialIcon icon="local_shipping" className="text-chart-5" />
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">28 min</div>
-              <p className="text-xs text-muted-foreground">Tempo de entrega</p>
+              <div className="text-2xl font-bold">
+                {kpis?.totalTransportadores ?? <span className="opacity-50">--</span>}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Estabelecimentos: {kpis?.totalEstabelecimentos ?? "--"}
+              </p>
             </CardContent>
           </Card>
         </div>
 
-        {/* Product Performance */}
+        {/* Gráfico de pedidos por status */}
         <Card className="transition-all hover:shadow-lg">
           <CardHeader>
-            <CardTitle>Produtos Mais Vendidos</CardTitle>
-            <CardDescription>Distribuição de vendas por tipo de botijão</CardDescription>
+            <CardTitle>Pedidos por Status</CardTitle>
+            <CardDescription>Distribuição dos pedidos do dia por status</CardDescription>
           </CardHeader>
           <CardContent>
             <ChartContainer
               config={{
-                vendas: {
-                  label: "Vendas",
+                total: {
+                  label: "Pedidos",
                   color: "hsl(var(--chart-1))",
                 },
               }}
               className="h-[300px]"
             >
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={productData} layout="vertical">
+                <BarChart data={statusChartData}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                  <XAxis type="number" className="text-xs" />
-                  <YAxis dataKey="name" type="category" className="text-xs" width={100} />
+                  <XAxis dataKey="status" className="text-xs" />
+                  <YAxis className="text-xs" />
                   <ChartTooltip content={<ChartTooltipContent />} cursor={{ fill: "hsl(var(--muted))" }} />
-                  <Bar dataKey="vendas" radius={[0, 4, 4, 0]}>
-                    {productData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.cor} />
+                  <Bar dataKey="total" radius={[4, 4, 0, 0]}>
+                    {statusChartData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={`hsl(var(--chart-${index + 1}))`} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -144,56 +186,36 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        {/* Recent Activity */}
-        <Card>
+        {/* Gráfico de pedidos por mês */}
+        <Card className="transition-all hover:shadow-lg">
           <CardHeader>
-            <CardTitle>Atividade Recente</CardTitle>
-            <CardDescription>Últimas movimentações do sistema</CardDescription>
+            <CardTitle>Pedidos por Mês</CardTitle>
+            <CardDescription>Volume de pedidos por mês</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {[
-                {
-                  icon: "check_circle",
-                  color: "text-chart-2",
-                  title: "Entrega concluída",
-                  description: "Pedido #1247 entregue em Vila Nova",
-                  time: "2 min atrás",
+            <ChartContainer
+              config={{
+                total: {
+                  label: "Pedidos",
+                  color: "hsl(var(--chart-2))",
                 },
-                {
-                  icon: "local_shipping",
-                  color: "text-primary",
-                  title: "Saiu para entrega",
-                  description: "Pedido #1248 - Entregador: João Silva",
-                  time: "8 min atrás",
-                },
-                {
-                  icon: "shopping_cart",
-                  color: "text-chart-4",
-                  title: "Novo pedido",
-                  description: "Pedido #1249 - 2x Botijão 13kg",
-                  time: "15 min atrás",
-                },
-                {
-                  icon: "inventory",
-                  color: "text-chart-5",
-                  title: "Alerta de estoque",
-                  description: "Botijão 13kg abaixo do mínimo",
-                  time: "1 hora atrás",
-                },
-              ].map((activity, index) => (
-                <div key={index} className="flex items-start gap-4">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
-                    <MaterialIcon icon={activity.icon} className={activity.color} />
-                  </div>
-                  <div className="flex-1 space-y-1">
-                    <p className="text-sm font-medium leading-none">{activity.title}</p>
-                    <p className="text-sm text-muted-foreground">{activity.description}</p>
-                  </div>
-                  <div className="text-xs text-muted-foreground">{activity.time}</div>
-                </div>
-              ))}
-            </div>
+              }}
+              className="h-[300px]"
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={pedidosPorMes}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis dataKey="mes" className="text-xs" />
+                  <YAxis className="text-xs" />
+                  <ChartTooltip content={<ChartTooltipContent />} cursor={{ fill: "hsl(var(--muted))" }} />
+                  <Bar dataKey="total" radius={[4, 4, 0, 0]}>
+                    {pedidosPorMes.map((entry, index) => (
+                      <Cell key={`cell-mes-${index}`} fill={`hsl(var(--chart-${(index % 5) + 1}))`} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartContainer>
           </CardContent>
         </Card>
       </div>

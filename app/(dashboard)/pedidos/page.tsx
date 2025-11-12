@@ -26,6 +26,7 @@ import { AdvertisingBanner } from "@/components/advertising-banner"
 import * as pedidoService from "@/services/pedidoService"
 import { initSocket } from "@/lib/socket"
 import { getStoredUser } from "@/lib/auth"
+import { apiFetch } from "@/lib/api"
 
 interface Order {
   id: string
@@ -58,10 +59,17 @@ export default function PedidosPage() {
   const [pedidosPagination, setPedidosPagination] = useState<pedidoService.PaginationInfo | null>(null)
   const [pedidoFilters, setPedidoFilters] = useState<{ page: number; limit: number; status?: string; codigoPedido?: string }>({
     page: 1,
-    limit: 20,
+    limit: 10, // sempre 10 por página
     status: undefined,
     codigoPedido: "",
   })
+  const statusOptions = [
+    { value: "all", label: "Todos" },
+    { value: "pendente", label: "Pendentes" },
+    { value: "confirmado", label: "Confirmados" },
+    { value: "entregue", label: "Entregues" },
+    { value: "cancelado", label: "Cancelados" },
+  ]
 
   // UI state (selection, dialogs, etc.)
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
@@ -77,6 +85,10 @@ export default function PedidosPage() {
   const [pageSize, setPageSize] = useState<number>(20)
   const [currentPage, setCurrentPage] = useState(1)
   const [codigoPedidoInput, setCodigoPedidoInput] = useState("")
+
+  // transportadores para seleção no encaminhamento
+  const [transportadores, setTransportadores] = useState<any[]>([])
+  const [loadingTransportadores, setLoadingTransportadores] = useState(false)
 
   // map backend Pedido -> UI Order
   const mapBackendToOrder = (p: pedidoService.Pedido): Order => {
@@ -96,7 +108,7 @@ export default function PedidosPage() {
       codigoPedido: p.codigoPedido,
       cliente: p.nomeCompleto ?? "-",
       endereco: pa?.endereco ?? pa?.descricao ?? "-",
-      bairro: "-", // backend doesn't provide bairro explicitly in sample
+      bairro: pa?.descricao ?? "-",
       telefone: p?.telefone ?? "-",
       itens,
       valor: p.total ?? 0,
@@ -107,6 +119,8 @@ export default function PedidosPage() {
       updatedAt: p.updatedAt ? new Date(p.updatedAt) : created,
       observacoes: undefined,
       codigoPedido: p.codigoPedido,
+      pontoDeAtendimento: pa,
+      transportadorId: (p as any).transportadorId,
     }
   }
 
@@ -164,8 +178,49 @@ export default function PedidosPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Buscar transportadores ao abrir modal de encaminhar
+  useEffect(() => {
+    if (!isForwardDialogOpen) return
+    setLoadingTransportadores(true)
+    apiFetch<any>("/empresas/transportadores")
+      .then(res => setTransportadores(res.data || []))
+      .catch(() => setTransportadores([]))
+      .finally(() => setLoadingTransportadores(false))
+  }, [isForwardDialogOpen])
+
   // Map server pedidos to UI orders for rendering
-  const ordersForRender: Order[] = pedidos.map(mapBackendToOrder)
+  const ordersForRender: Order[] = pedidos.map((p) => {
+    const pa = p.pontoDeAtendimento
+    const itens =
+      p.produtos?.map((it) => {
+        const pe = it.produtoEmpresaId
+        const tipo =
+          typeof (pe as any).produtoId === "object" ? ((pe as any).produtoId?.descricao || "Produto") : String((pe as any).produtoId)
+        const preco = (pe as any).preco ?? 0
+        return { tipo, quantidade: it.quantidade ?? 1, preco }
+      }) ?? []
+
+    const created = p.createdAt ? new Date(p.createdAt) : new Date()
+    return {
+      id: p.codigoPedido ?? p._id,
+      codigoPedido: p.codigoPedido,
+      cliente: p.nomeCompleto ?? "-",
+      endereco: pa?.endereco ?? pa?.descricao ?? "-",
+      bairro: pa?.descricao ?? "-",
+      telefone: p?.telefone ?? "-",
+      itens,
+      valor: p.total ?? 0,
+      status: (p.status as any) ?? "pendente",
+      horario: created.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
+      metodoPagamento: (p.metodoPagamento as any) ?? "dinheiro",
+      createdAt: created,
+      updatedAt: p.updatedAt ? new Date(p.updatedAt) : created,
+      observacoes: undefined,
+      codigoPedido: p.codigoPedido,
+      pontoDeAtendimento: pa,
+      transportadorId: (p as any).transportadorId,
+    }
+  })
 
   const totalPages = Math.max(1, pedidosPagination ? pedidosPagination.pages : 1)
   const totalItems = pedidosPagination?.total ?? pedidos.length
@@ -187,15 +242,13 @@ export default function PedidosPage() {
   }
 
   // Atualizar status com PUT no backend (atualização otimista)
-  const handleUpdateOrderStatus = async (pedidoId: string, newStatus: "pendente" | "confirmado" | "entregue" | "cancelado") => {
+  const handleUpdateOrderStatus = async (pedidoId: string, newStatus: "pendente" | "confirmado" | "entregue" | "cancelado", extra?: any) => {
     const prev = pedidos
-    // otimista: atualizar no estado
-    setPedidos((cur) => cur.map((p) => (p._id === pedidoId ? { ...p, status: newStatus } : p)))
+    setPedidos((cur) => cur.map((p) => (p._id === pedidoId ? { ...p, status: newStatus, ...extra } : p)))
     try {
-      await pedidoService.updatePedidoStatus(pedidoId, { status: newStatus })
+      await pedidoService.updatePedidoStatus(pedidoId, { status: newStatus, ...(extra || {}) })
       toast({ title: "Status atualizado", description: `Pedido atualizado para ${newStatus}.` })
     } catch (err: any) {
-      // rollback
       setPedidos(prev)
       toast({ title: "Erro ao atualizar status", description: err?.message ?? String(err), variant: "destructive" })
       console.error("Erro ao atualizar status:", err)
@@ -203,22 +256,47 @@ export default function PedidosPage() {
   }
 
   const handleAcceptOrder = (orderId: string) => {
-    // encontrar o _id do pedido no array
     const pedido = pedidos.find((p) => p.codigoPedido === orderId)
     if (!pedido) return
     handleUpdateOrderStatus(pedido._id, "confirmado")
   }
 
-  const handleForwardOrder = () => {
+  // Encaminhar pedido: PUT com id do transportador e atualizar estado local
+  const handleForwardOrder = async () => {
     if (!selectedOrder || !selectedDeliveryPerson) return
     const pedido = pedidos.find((p) => p.codigoPedido === selectedOrder.codigoPedido)
     if (!pedido) return
-    // nota: o status aqui pode ser "entregue" ou um status intermediário; ajuste conforme seu modelo
-    // por agora, vamos apenas confirmar que foi encaminhado (que já foi confirmado)
-    // se quiser um status separado "em_entrega", adicione ao backend
-    toast({ title: "Pedido encaminhado", description: `Pedido #${selectedOrder.codigoPedido} encaminhado para ${selectedDeliveryPerson}.` })
-    setIsForwardDialogOpen(false)
-    setSelectedOrder(null)
+    const transportadorObj = transportadores.find(t => t._id === selectedDeliveryPerson)
+    try {
+      await handleUpdateOrderStatus(
+        pedido._id,
+        "confirmado",
+        { transportadorId: selectedDeliveryPerson }
+      )
+      // Atualiza o transportadorId no pedido localmente para refletir imediatamente na UI
+      setPedidos((prev) =>
+        prev.map((p) =>
+          p._id === pedido._id
+            ? { ...p, transportadorId: selectedDeliveryPerson }
+            : p
+        )
+      )
+      // Atualiza também o selectedOrder se estiver aberto
+      setSelectedOrder((prev) =>
+        prev
+          ? { ...prev, transportadorId: selectedDeliveryPerson }
+          : prev
+      )
+      toast({
+        title: "Pedido encaminhado",
+        description: `Pedido #${selectedOrder.codigoPedido} encaminhado para ${transportadorObj ? (transportadorObj.nome + " " + (transportadorObj.sobrenome || "")) : selectedDeliveryPerson}.`
+      })
+      setIsForwardDialogOpen(false)
+      setSelectedOrder(null)
+      setSelectedDeliveryPerson("")
+    } catch (err) {
+      // erro já tratado em handleUpdateOrderStatus
+    }
   }
 
   const handleCompleteOrder = (orderId: string) => {
@@ -279,6 +357,10 @@ export default function PedidosPage() {
   const OrderCard = ({ order }: { order: Order }) => {
     const statusConfig = getStatusConfig(order.status)
     const isSelected = selectedOrders.has(order.id)
+    // Transportador associado (objeto ou id)
+    const transportadorObj = order.transportadorId
+      ? transportadores.find(t => t._id === order.transportadorId)
+      : null
 
     return (
       <div
@@ -302,6 +384,15 @@ export default function PedidosPage() {
                 <MaterialIcon icon={getMetodoPagamentoIcon(order.metodoPagamento)} className="text-sm" />
                 {order.metodoPagamento}
               </Badge>
+              {/* Mostra transportador associado, se houver */}
+              {order.transportadorId && (
+                <Badge variant="secondary" className="gap-1">
+                  <MaterialIcon icon="local_shipping" className="text-sm" />
+                  {transportadorObj
+                    ? `${transportadorObj.nome} ${transportadorObj.sobrenome}`
+                    : "Transportador associado"}
+                </Badge>
+              )}
             </div>
             <div className="space-y-1 text-sm">
               <p>
@@ -350,6 +441,15 @@ export default function PedidosPage() {
         </div>
       </div>
     )
+  }
+
+  // Filtros rápidos por status
+  const handleStatusFilter = (status: string) => {
+    setPedidoFilters((f) => ({
+      ...f,
+      page: 1,
+      status: status === "all" ? undefined : status,
+    }))
   }
 
   return (
@@ -404,6 +504,20 @@ export default function PedidosPage() {
               <div className="text-2xl font-bold">{pedidos.filter((p) => p.status === "cancelado").length}</div>
             </CardContent>
           </Card>
+        </div>
+
+        {/* Filtros rápidos por status */}
+        <div className="flex flex-wrap gap-2 mb-4">
+          {statusOptions.map(opt => (
+            <Button
+              key={opt.value}
+              variant={pedidoFilters.status === (opt.value === "all" ? undefined : opt.value) ? "default" : "outline"}
+              size="sm"
+              onClick={() => handleStatusFilter(opt.value)}
+            >
+              {opt.label}
+            </Button>
+          ))}
         </div>
 
         {/* Orders List */}
@@ -625,33 +739,18 @@ export default function PedidosPage() {
                   {ordersForRender.map((order) => <OrderCard key={order.id} order={order} />)}
                 </div>
 
-                {/* Pagination (server-driven) */}
-                { (pedidosPagination?.pages ?? 1) > 1 && (
-                  <div className="mt-6 flex flex-col gap-4 border-t border-border pt-4 md:flex-row md:items-center md:justify-between">
-                    <div className="flex items-center gap-2">
-                      <Label>Itens por página:</Label>
-                      <Select value={String(pedidoFilters.limit)} onValueChange={(value) => setPedidoFilters((f) => ({ ...f, limit: Number(value), page: 1 }))}>
-                        <SelectTrigger className="w-[100px]"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="10">10</SelectItem>
-                          <SelectItem value="20">20</SelectItem>
-                          <SelectItem value="50">50</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <p className="text-sm text-muted-foreground">
-                      Página {pedidoFilters.page} de {pedidosPagination?.pages ?? 1} • {pedidosPagination?.total ?? pedidos.length} pedido(s) total
-                    </p>
-
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: 1 }))} disabled={pedidoFilters.page === 1}><MaterialIcon icon="first_page" /></Button>
-                      <Button variant="outline" size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: Math.max(1, f.page - 1) }))} disabled={pedidoFilters.page === 1}><MaterialIcon icon="chevron_left" className="mr-1" />Anterior</Button>
-                      <Button variant="outline" size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: Math.min((pedidosPagination?.pages ?? 1), f.page + 1) }))} disabled={pedidoFilters.page === (pedidosPagination?.pages ?? 1)}>Próxima<MaterialIcon icon="chevron_right" className="ml-1" /></Button>
-                      <Button variant="outline" size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: pedidosPagination?.pages ?? f.page }))} disabled={pedidoFilters.page === (pedidosPagination?.pages ?? 1)}><MaterialIcon icon="last_page" /></Button>
-                    </div>
+                {/* Paginação: sempre 10 por página */}
+                <div className="mt-6 flex flex-col gap-4 border-t border-border pt-4 md:flex-row md:items-center md:justify-between">
+                  <p className="text-sm text-muted-foreground">
+                    Página {pedidoFilters.page} de {pedidosPagination?.pages ?? 1} • {pedidosPagination?.total ?? pedidos.length} pedido(s) total
+                  </p>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: 1 }))} disabled={pedidoFilters.page === 1}><MaterialIcon icon="first_page" /></Button>
+                    <Button variant="outline" size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: Math.max(1, f.page - 1) }))} disabled={pedidoFilters.page === 1}><MaterialIcon icon="chevron_left" className="mr-1" />Anterior</Button>
+                    <Button variant="outline" size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: Math.min((pedidosPagination?.pages ?? 1), f.page + 1) }))} disabled={pedidoFilters.page === (pedidosPagination?.pages ?? 1)}>Próxima<MaterialIcon icon="chevron_right" className="ml-1" /></Button>
+                    <Button variant="outline" size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: pedidosPagination?.pages ?? f.page }))} disabled={pedidoFilters.page === (pedidosPagination?.pages ?? 1)}><MaterialIcon icon="last_page" /></Button>
                   </div>
-                )}
+                </div>
               </>
             )}
           </CardContent>
@@ -662,7 +761,7 @@ export default function PedidosPage() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Encaminhar Pedido</DialogTitle>
-              <DialogDescription>Selecione um entregador para este pedido</DialogDescription>
+              <DialogDescription>Selecione um transportador para este pedido</DialogDescription>
             </DialogHeader>
             {selectedOrder && (
               <div className="space-y-4">
@@ -672,15 +771,19 @@ export default function PedidosPage() {
                   <p className="text-sm text-muted-foreground">{selectedOrder.endereco}</p>
                 </div>
                 <div className="space-y-2">
-                  <Label>Entregador</Label>
-                  <Select value={selectedDeliveryPerson} onValueChange={setSelectedDeliveryPerson}>
+                  <Label>Transportador</Label>
+                  <Select
+                    value={selectedDeliveryPerson}
+                    onValueChange={setSelectedDeliveryPerson}
+                    disabled={loadingTransportadores}
+                  >
                     <SelectTrigger>
-                      <SelectValue placeholder="Selecione um entregador" />
+                      <SelectValue placeholder={loadingTransportadores ? "Carregando..." : "Selecione um transportador"} />
                     </SelectTrigger>
                     <SelectContent>
-                      {deliveryPersons.map((person) => (
-                        <SelectItem key={person} value={person}>
-                          {person}
+                      {transportadores.map((t) => (
+                        <SelectItem key={t._id} value={t._id}>
+                          {t.nome} {t.sobrenome} • {t.telefone}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -742,10 +845,26 @@ export default function PedidosPage() {
                     <Label className="text-muted-foreground">Valor Total</Label>
                     <p className="font-medium">{formatAOA(selectedOrder.valor)}</p>
                   </div>
-                  {selectedOrder.entregador && (
-                    <div>
-                      <Label className="text-muted-foreground">Entregador</Label>
-                      <p className="font-medium">{selectedOrder.entregador}</p>
+                  {/* Transportador do pedido */}
+                  {selectedOrder.transportadorId && (
+                    <div className="md:col-span-2">
+                      <Label className="text-muted-foreground">Transportador</Label>
+                      <p className="font-medium">
+                        {(() => {
+                          const t = transportadores.find(tr => tr._id === selectedOrder.transportadorId)
+                          if (t) {
+                            return `${t.nome} ${t.sobrenome} (${t.telefone})`
+                          }
+                          // fallback: mostra id se não encontrar
+                          if (typeof selectedOrder.transportadorId === "string") return selectedOrder.transportadorId
+                          // se for objeto, mostra nome/email
+                          if (typeof selectedOrder.transportadorId === "object" && selectedOrder.transportadorId !== null) {
+                            const obj = selectedOrder.transportadorId
+                            return [obj.nome, obj.sobrenome, obj.telefone].filter(Boolean).join(" ") || JSON.stringify(obj)
+                          }
+                          return "-"
+                        })()}
+                      </p>
                     </div>
                   )}
                   {selectedOrder.tempoEntrega && (
