@@ -96,7 +96,7 @@ export default function TransportadoresPage() {
       formData.append("dataDeNascimento", addForm.dataDeNascimento)
       if (addForm.foto) formData.append("foto", addForm.foto)
 
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3333"}/empresas/transportadores`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://talagas-api.onrender.com"}/empresas/transportadores`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}")?.token || "" : ""}`,
@@ -138,7 +138,7 @@ export default function TransportadoresPage() {
       formData.append("dataDeNascimento", editForm.dataDeNascimento)
       if (editForm.foto) formData.append("foto", editForm.foto)
 
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3333"}/empresas/transportadores/${editTransportador._id}`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://talagas-api.onrender.com"}/empresas/transportadores/${editTransportador._id}`, {
         method: "PUT",
         headers: {
           Authorization: `Bearer ${typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}")?.token || "" : ""}`,
