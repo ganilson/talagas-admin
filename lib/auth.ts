@@ -34,7 +34,7 @@ export interface UserData {
   estabelecimentoId?: string
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://talagas-api.onrender.com'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3333'
 
 // Login function that integrates with backend
 export async function login(email: string, password: string): Promise<UserData> {

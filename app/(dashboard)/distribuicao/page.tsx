@@ -67,6 +67,10 @@ export default function DistribuicaoPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [pageSize, setPageSize] = useState<number>(9)
   const [currentPage, setCurrentPage] = useState<number>(1)
+  const [mapSearch, setMapSearch] = useState("")
+  const [mapSearchLoading, setMapSearchLoading] = useState(false)
+  const [mapSearchError, setMapSearchError] = useState<string | null>(null)
+  const [mapSearchResults, setMapSearchResults] = useState<PontoVenda[] | null>(null)
 
   const mapRef = useRef<HTMLDivElement | null>(null)
   const leafletMapRef = useRef<any>(null)
@@ -526,6 +530,25 @@ export default function DistribuicaoPage() {
     }
   }, [selectedPoint])
 
+  // Pesquisa por descrição/nome do ponto cadastrado (não usa Nominatim, só filtra pontos)
+  const handleMapSearch = (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    const q = mapSearch.trim().toLowerCase()
+    if (!q) {
+      setMapSearchResults(null)
+      setMapSearchError(null)
+      return
+    }
+    const results = pontos.filter(
+      (p) =>
+        (p.nome?.toLowerCase().includes(q)) ||
+        (p.endereco?.toLowerCase().includes(q)) ||
+        (p.telefone?.toLowerCase().includes(q))
+    )
+    setMapSearchResults(results)
+    setMapSearchError(results.length === 0 ? "Nenhum ponto encontrado para sua busca." : null)
+  }
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="mb-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -547,7 +570,7 @@ export default function DistribuicaoPage() {
                   Preencha os dados e selecione a localização no mapa (clique no mapa).
                 </DialogDescription>
               </DialogHeader>
-              <form onSubmit={handleAddSubmit} className="space-y-4">
+              <form onSubmit={handleAddSubmit} className="space-y-4" autoComplete="off">
                 <div>
                   <Label htmlFor="nome">Nome</Label>
                   <Input id="nome" value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Loja Exemplo" />
@@ -559,6 +582,60 @@ export default function DistribuicaoPage() {
                 <div>
                   <Label htmlFor="telefone">Telefone</Label>
                   <Input id="telefone" value={telefone} onChange={(e) => setTelefone(e.target.value)} placeholder="(xx) 9xxxx-xxxx" />
+                </div>
+                <div>
+                  <Label>Pesquisar ponto cadastrado</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={mapSearch}
+                      onChange={e => setMapSearch(e.target.value)}
+                      placeholder="Digite nome, endereço ou telefone..."
+                      autoComplete="off"
+                    />
+                    <Button type="button" onClick={handleMapSearch} disabled={!mapSearch.trim()}>
+                      Buscar
+                    </Button>
+                    <Button type="button" variant="ghost" onClick={() => { setMapSearch(""); setMapSearchResults(null); setMapSearchError(null); }}>
+                      Limpar
+                    </Button>
+                  </div>
+                  {mapSearchError && <div className="text-xs text-destructive mt-1">{mapSearchError}</div>}
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Ex: "Ponto de Venda", "Talatona", "923456789"
+                  </div>
+                  {mapSearchResults && mapSearchResults.length > 0 && (
+                    <div className="mt-2 border rounded bg-muted/50 p-2 max-h-40 overflow-auto">
+                      <div className="text-xs mb-1 text-muted-foreground">Resultados:</div>
+                      {mapSearchResults.map((p) => (
+                        <div
+                          key={p.id}
+                          className="cursor-pointer hover:bg-primary/10 rounded px-2 py-1 flex flex-col"
+                          onClick={() => {
+                            setNome(p.nome)
+                            setEndereco(p.endereco ?? "")
+                            setTelefone(p.telefone ?? "")
+                            setLat(p.lat)
+                            setLng(p.lng)
+                            setMapSearch(p.nome)
+                            setMapSearchResults(null)
+                            setMapSearchError(null)
+                            // Centraliza no mapa de cadastro se aberto
+                            if (leafletMapRef.current && p.lat && p.lng) {
+                              leafletMapRef.current.setView([p.lat, p.lng], 16)
+                              const L = (window as any).L
+                              const opts = markerIconRef.current ? { icon: markerIconRef.current } : undefined
+                              if (markerRef.current) markerRef.current.setLatLng([p.lat, p.lng])
+                              else markerRef.current = L.marker([p.lat, p.lng], opts).addTo(leafletMapRef.current)
+                            }
+                          }}
+                        >
+                          <span className="font-medium">{p.nome}</span>
+                          <span className="text-xs text-muted-foreground">{p.endereco ?? "-"}</span>
+                          <span className="text-xs text-muted-foreground">{p.telefone ?? "-"}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <div className="flex items-center gap-2 mb-2">

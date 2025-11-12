@@ -45,6 +45,7 @@ interface Order {
   tempoEntrega?: number
   observacoes?: string
   codigoPedido?: string
+  totalFrete?: number
 }
 
 const deliveryPersons = ["João Silva", "Pedro Costa", "Ana Souza", "Carlos Mendes"]
@@ -121,6 +122,7 @@ export default function PedidosPage() {
       codigoPedido: p.codigoPedido,
       pontoDeAtendimento: pa,
       transportadorId: (p as any).transportadorId,
+      totalFrete: (p as any).totalFrete ?? undefined,
     }
   }
 
@@ -219,6 +221,7 @@ export default function PedidosPage() {
       codigoPedido: p.codigoPedido,
       pontoDeAtendimento: pa,
       transportadorId: (p as any).transportadorId,
+      totalFrete: (p as any).totalFrete ?? undefined,
     }
   })
 
@@ -845,6 +848,12 @@ export default function PedidosPage() {
                     <Label className="text-muted-foreground">Valor Total</Label>
                     <p className="font-medium">{formatAOA(selectedOrder.valor)}</p>
                   </div>
+                  {typeof selectedOrder.totalFrete === "number" && (
+                    <div>
+                      <Label className="text-muted-foreground">Frete</Label>
+                      <p className="font-medium">{formatAOA(selectedOrder.totalFrete)}</p>
+                    </div>
+                  )}
                   {/* Transportador do pedido */}
                   {selectedOrder.transportadorId && (
                     <div className="md:col-span-2">

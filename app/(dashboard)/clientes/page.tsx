@@ -86,23 +86,44 @@ export default function TransportadoresPage() {
   // CRUD: POST
   const handleAddTransportador = async () => {
     try {
-      const formData = new FormData()
-      formData.append("nome", addForm.nome)
-      formData.append("sobrenome", addForm.sobrenome)
-      formData.append("telefone", addForm.telefone)
-      formData.append("email", addForm.email)
-      formData.append("endereco", addForm.endereco)
-      formData.append("genero", addForm.genero)
-      formData.append("dataDeNascimento", addForm.dataDeNascimento)
-      if (addForm.foto) formData.append("foto", addForm.foto)
-
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://talagas-api.onrender.com"}/empresas/transportadores`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}")?.token || "" : ""}`,
-        },
-        body: formData,
-      })
+      let res;
+      // Se tiver foto, usa multipart/form-data
+      if (addForm.foto) {
+        const formData = new FormData()
+        formData.append("nome", addForm.nome)
+        formData.append("sobrenome", addForm.sobrenome)
+        formData.append("telefone", addForm.telefone)
+        formData.append("email", addForm.email)
+        formData.append("endereco", addForm.endereco)
+        formData.append("genero", addForm.genero)
+        formData.append("dataDeNascimento", addForm.dataDeNascimento)
+        formData.append("files", addForm.foto)
+        res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3333"}/empresas/transportadores`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}")?.token || "" : ""}`,
+          },
+          body: formData,
+        })
+      } else {
+        // Sem arquivo, envia JSON
+        res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3333"}/empresas/transportadores`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}")?.token || "" : ""}`,
+          },
+          body: JSON.stringify({
+            nome: addForm.nome,
+            sobrenome: addForm.sobrenome,
+            telefone: addForm.telefone,
+            email: addForm.email,
+            endereco: addForm.endereco,
+            genero: addForm.genero,
+            dataDeNascimento: addForm.dataDeNascimento,
+          }),
+        })
+      }
       if (!res.ok) throw new Error("Erro ao cadastrar transportador")
       const novo = await res.json()
       setTransportadores((prev) => [novo.data || novo, ...prev])
@@ -128,23 +149,42 @@ export default function TransportadoresPage() {
   const handleUpdateTransportador = async () => {
     if (!editTransportador) return
     try {
-      const formData = new FormData()
-      formData.append("nome", editForm.nome)
-      formData.append("sobrenome", editForm.sobrenome)
-      formData.append("telefone", editForm.telefone)
-      formData.append("email", editForm.email)
-      formData.append("endereco", editForm.endereco)
-      formData.append("genero", editForm.genero)
-      formData.append("dataDeNascimento", editForm.dataDeNascimento)
-      if (editForm.foto) formData.append("foto", editForm.foto)
-
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://talagas-api.onrender.com"}/empresas/transportadores/${editTransportador._id}`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}")?.token || "" : ""}`,
-        },
-        body: formData,
-      })
+      let res;
+      if (editForm.foto) {
+        const formData = new FormData()
+        formData.append("nome", editForm.nome)
+        formData.append("sobrenome", editForm.sobrenome)
+        formData.append("telefone", editForm.telefone)
+        formData.append("email", editForm.email)
+        formData.append("endereco", editForm.endereco)
+        formData.append("genero", editForm.genero)
+        formData.append("dataDeNascimento", editForm.dataDeNascimento)
+        formData.append("files", editForm.foto)
+        res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3333"}/empresas/transportadores/${editTransportador._id}`, {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}")?.token || "" : ""}`,
+          },
+          body: formData,
+        })
+      } else {
+        res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3333"}/empresas/transportadores/${editTransportador._id}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}")?.token || "" : ""}`,
+          },
+          body: JSON.stringify({
+            nome: editForm.nome,
+            sobrenome: editForm.sobrenome,
+            telefone: editForm.telefone,
+            email: editForm.email,
+            endereco: editForm.endereco,
+            genero: editForm.genero,
+            dataDeNascimento: editForm.dataDeNascimento,
+          }),
+        })
+      }
       if (!res.ok) throw new Error("Erro ao atualizar transportador")
       const updated = await res.json()
       setTransportadores((prev) =>
