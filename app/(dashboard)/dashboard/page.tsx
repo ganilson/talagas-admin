@@ -19,7 +19,7 @@ import {
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { apiFetch } from "@/lib/api"
 import { Button } from "@/components/ui/button"
-
+ 
 export default function DashboardPage() {
   // KPIs
   const [kpis, setKpis] = useState<any>(null)
