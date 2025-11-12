@@ -20,7 +20,7 @@ export interface CargoItem {
 }
 
 export async function getCargosToFuncionario(): Promise<CargoItem[]> {
-  const result = await apiFetch<{ success: boolean; data: CargoItem[] }>(`/adminGeral/cargos?toFuncionario=true`)
+  const result = await apiFetch<{ success: boolean; data: CargoItem[] }>(`/adminGeral/cargos`)
   return result.data
 }
 
