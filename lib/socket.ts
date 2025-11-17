@@ -17,7 +17,7 @@ export function initSocket(estabId: string, callbacks: SocketCallbacks): (() => 
     }
   }
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3333"
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://talagas-api.onrender.com"
   const token = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}")?.token : ""
 
   try {
