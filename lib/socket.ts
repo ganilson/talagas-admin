@@ -3,60 +3,94 @@ import { io, Socket } from "socket.io-client"
 
 let socket: Socket | null = null
 
-export function initSocket(estabelecimentoId: string, handlers?: {
-  onConnect?: () => void
-  onDisconnect?: () => void
+export interface SocketCallbacks {
   onNovoPedido?: (payload: any) => void
   onPedidoAtualizado?: (payload: any) => void
-}) {
-  // disconnect previous if exists
-  if (socket) {
-    try { socket.disconnect() } catch (e) {}
-    socket = null
+  onPedidoCriado?: (payload: any) => void
+}
+
+export function initSocket(estabId: string, callbacks: SocketCallbacks): (() => void) | null {
+  if (socket?.connected) {
+    return () => {
+      // já conectado, só configurar listeners
+      setupListeners(estabId, callbacks)
+    }
   }
 
-  // inicializa socket com a mesma base que a API
-  // garante que a url não tenha dupla barra
-  const base = API_BASE_URL.replace(/\/$/, "")
-  socket = io(base, {
-    transports: ["websocket"],
-    // optional: autoConnect: true
-  })
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3333"
+  const token = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}")?.token : ""
 
-  socket.on("connect", () => {
-    // entrar na sala do estabelecimento
-    try {
-      socket?.emit("join-estabelecimento", estabelecimentoId)
-    } catch (e) {}
-    handlers?.onConnect?.()
-  })
+  try {
+    socket = io(apiUrl, {
+      auth: { token },
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      reconnectionAttempts: 5,
+    })
 
-  socket.on("disconnect", () => {
-    handlers?.onDisconnect?.()
-  })
+    socket.on("connect", () => {
+      console.log("Socket conectado:", socket?.id)
+      // entrar na sala do estabelecimento
+      socket?.emit("join-room", { room: `estabelecimento-${estabId}` })
+    })
 
-  socket.on(`novo-pedido-${estabelecimentoId}`, (payload: any) => {
-    handlers?.onNovoPedido?.(payload)
-  })
+    socket.on("disconnect", () => {
+      console.log("Socket desconectado")
+    })
 
-  socket.on(`pedido-atualizado-${estabelecimentoId}`, (payload: any) => {
-    handlers?.onPedidoAtualizado?.(payload)
-  })
+    setupListeners(estabId, callbacks)
 
-  // retorna função de cleanup
-  return () => {
-    if (!socket) return
-    try {
-      socket.off(`novo-pedido-${estabelecimentoId}`)
-      socket.off(`pedido-atualizado-${estabelecimentoId}`)
-      socket.disconnect()
-    } catch (e) {}
-    socket = null
+    return () => {
+      // cleanup
+      if (socket) {
+        socket.off("novo-pedido")
+        socket.off("pedido-atualizado")
+        socket.off("pedido-criado")
+        socket.disconnect()
+        socket = null
+      }
+    }
+  } catch (err) {
+    console.error("Erro ao inicializar socket:", err)
+    return null
   }
 }
 
-export function emitEvent(event: string, payload?: any) {
-  try {
-    socket?.emit(event, payload)
-  } catch (e) {}
+function setupListeners(estabId: string, callbacks: SocketCallbacks) {
+  if (!socket) return
+
+  // Ouve 'novo-pedido' do canal estabelecimento-{estabId}
+  socket.on("novo-pedido", (payload) => {
+    console.log("Novo pedido recebido:", payload)
+    callbacks.onNovoPedido?.(payload)
+  })
+
+  // Ouve 'pedido-atualizado' (pode ser de qualquer pedido no estabelecimento)
+  socket.on("pedido-atualizado", (payload) => {
+    console.log("Pedido atualizado:", payload)
+    callbacks.onPedidoAtualizado?.(payload)
+  })
+
+  // Ouve 'pedido-criado' de salas específicas pedido-{id}
+  socket.on("pedido-criado", (payload) => {
+    console.log("Pedido criado:", payload)
+    callbacks.onPedidoCriado?.(payload)
+  })
+}
+
+export function getSocket(): Socket | null {
+  return socket
+}
+
+export function emitJoinRoom(room: string) {
+  if (socket) {
+    socket.emit("join-room", { room })
+  }
+}
+
+export function emitLeaveRoom(room: string) {
+  if (socket) {
+    socket.emit("leave-room", { room })
+  }
 }

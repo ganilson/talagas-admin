@@ -36,6 +36,8 @@ interface Order {
   telefone: string
   itens: { tipo: string; quantidade: number; preco: number }[]
   valor: number
+  subtotal: number
+  frete: number
   status: "pendente" | "confirmado" | "entregue" | "cancelado"
   horario: string
   entregador?: string
@@ -45,7 +47,6 @@ interface Order {
   tempoEntrega?: number
   observacoes?: string
   codigoPedido?: string
-  totalFrete?: number
 }
 
 const deliveryPersons = ["João Silva", "Pedro Costa", "Ana Souza", "Carlos Mendes"]
@@ -104,6 +105,9 @@ export default function PedidosPage() {
       }) ?? []
 
     const created = p.createdAt ? new Date(p.createdAt) : new Date()
+    const subtotal = itens.reduce((acc, item) => acc + (item.quantidade * item.preco), 0)
+    const frete = (p as any).frete ?? 0
+    const valorTotal = subtotal + frete
     return {
       id: p.codigoPedido ?? p._id,
       codigoPedido: p.codigoPedido,
@@ -112,7 +116,9 @@ export default function PedidosPage() {
       bairro: pa?.descricao ?? "-",
       telefone: p?.telefone ?? "-",
       itens,
-      valor: p.total ?? 0,
+      valor: valorTotal,
+      subtotal,
+      frete,
       status: (p.status as any) ?? "pendente",
       horario: created.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
       metodoPagamento: (p.metodoPagamento as any) ?? "dinheiro",
@@ -122,7 +128,6 @@ export default function PedidosPage() {
       codigoPedido: p.codigoPedido,
       pontoDeAtendimento: pa,
       transportadorId: (p as any).transportadorId,
-      totalFrete: (p as any).totalFrete ?? undefined,
     }
   }
 
@@ -157,12 +162,14 @@ export default function PedidosPage() {
   useEffect(() => {
     const user = getStoredUser()
     const estabId = user?.estabelecimentoId
+    console.log(estabId)
     if (!estabId) return
 
     const cleanup = initSocket(estabId, {
       onNovoPedido: (payload) => {
         toast({ title: "Novo pedido", description: `Pedido: ${payload?.data?.codigoPedido ?? "novo"}` })
         // refetch page
+        console.log("DATA");
         loadPedidos()
         if (isNotificationSupported()) {
           showNotification("TalaGás - Novo Pedido", { body: `Pedido: ${payload?.data?.codigoPedido ?? ""}` })
@@ -171,6 +178,13 @@ export default function PedidosPage() {
       onPedidoAtualizado: (payload) => {
         toast({ title: "Pedido atualizado", description: `Pedido: ${payload?.data?.codigoPedido ?? "atualizado"}` })
         loadPedidos()
+      },
+      onPedidoCriado: (payload) => {
+        toast({ title: "Pedido criado", description: `Pedido: ${payload?.data?.codigoPedido ?? "criado"}` })
+        loadPedidos()
+        if (isNotificationSupported()) {
+          showNotification("TalaGás - Pedido Criado", { body: `Pedido: ${payload?.data?.codigoPedido ?? ""}` })
+        }
       },
     })
 
@@ -203,6 +217,9 @@ export default function PedidosPage() {
       }) ?? []
 
     const created = p.createdAt ? new Date(p.createdAt) : new Date()
+    const subtotal = itens.reduce((acc, item) => acc + (item.quantidade * item.preco), 0)
+    const frete = (p as any).frete ?? 0
+    const valorTotal = subtotal + frete
     return {
       id: p.codigoPedido ?? p._id,
       codigoPedido: p.codigoPedido,
@@ -211,7 +228,9 @@ export default function PedidosPage() {
       bairro: pa?.descricao ?? "-",
       telefone: p?.telefone ?? "-",
       itens,
-      valor: p.total ?? 0,
+      valor: valorTotal,
+      subtotal,
+      frete,
       status: (p.status as any) ?? "pendente",
       horario: created.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
       metodoPagamento: (p.metodoPagamento as any) ?? "dinheiro",
@@ -221,7 +240,6 @@ export default function PedidosPage() {
       codigoPedido: p.codigoPedido,
       pontoDeAtendimento: pa,
       transportadorId: (p as any).transportadorId,
-      totalFrete: (p as any).totalFrete ?? undefined,
     }
   })
 
@@ -848,10 +866,14 @@ export default function PedidosPage() {
                     <Label className="text-muted-foreground">Valor Total</Label>
                     <p className="font-medium">{formatAOA(selectedOrder.valor)}</p>
                   </div>
-                  {typeof selectedOrder.totalFrete === "number" && (
+                  <div>
+                    <Label className="text-muted-foreground">Subtotal (Produtos)</Label>
+                    <p className="font-medium">{formatAOA(selectedOrder.subtotal)}</p>
+                  </div>
+                  {selectedOrder.frete > 0 && (
                     <div>
                       <Label className="text-muted-foreground">Frete</Label>
-                      <p className="font-medium">{formatAOA(selectedOrder.totalFrete)}</p>
+                      <p className="font-medium">{formatAOA(selectedOrder.frete)}</p>
                     </div>
                   )}
                   {/* Transportador do pedido */}
@@ -903,6 +925,16 @@ export default function PedidosPage() {
                         <span className="font-medium">{formatAOA(item.quantidade * item.preco)}</span>
                       </div>
                     ))}
+                    {selectedOrder.frete > 0 && (
+                      <div className="flex justify-between rounded-lg border border-dashed p-3 bg-muted/50">
+                        <span className="font-medium">Frete</span>
+                        <span className="font-medium text-primary">{formatAOA(selectedOrder.frete)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between rounded-lg border-t-2 border-primary p-3 font-bold text-lg">
+                      <span>Total</span>
+                      <span className="text-primary">{formatAOA(selectedOrder.valor)}</span>
+                    </div>
                   </div>
                 </div>
 
