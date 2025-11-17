@@ -27,6 +27,7 @@ import * as pedidoService from "@/services/pedidoService"
 import { initSocket } from "@/lib/socket"
 import { getStoredUser } from "@/lib/auth"
 import { apiFetch } from "@/lib/api"
+import { isConnected } from "@/lib/socket"
 
 interface Order {
   id: string
@@ -37,7 +38,7 @@ interface Order {
   itens: { tipo: string; quantidade: number; preco: number }[]
   valor: number
   subtotal: number
-  frete: number
+  totalFrete: number
   status: "pendente" | "confirmado" | "entregue" | "cancelado"
   horario: string
   entregador?: string
@@ -106,8 +107,8 @@ export default function PedidosPage() {
 
     const created = p.createdAt ? new Date(p.createdAt) : new Date()
     const subtotal = itens.reduce((acc, item) => acc + (item.quantidade * item.preco), 0)
-    const frete = (p as any).frete ?? 0
-    const valorTotal = subtotal + frete
+    const totalFrete = (p as any).totalFrete ?? 0
+    const valorTotal = subtotal + totalFrete
     return {
       id: p.codigoPedido ?? p._id,
       codigoPedido: p.codigoPedido,
@@ -118,7 +119,7 @@ export default function PedidosPage() {
       itens,
       valor: valorTotal,
       subtotal,
-      frete,
+      totalFrete,
       status: (p.status as any) ?? "pendente",
       horario: created.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
       metodoPagamento: (p.metodoPagamento as any) ?? "dinheiro",
@@ -158,29 +159,48 @@ export default function PedidosPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pedidoFilters.page, pedidoFilters.limit, pedidoFilters.status, pedidoFilters.codigoPedido])
 
+  // Reproduz som de notificação
+  const playNotificationSound = () => {
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+      const oscillator = audioContext.createOscillator()
+      const gainNode = audioContext.createGain()
+      oscillator.connect(gainNode)
+      gainNode.connect(audioContext.destination)
+      oscillator.frequency.value = 800
+      oscillator.type = "sine"
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime)
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5)
+      oscillator.start(audioContext.currentTime)
+      oscillator.stop(audioContext.currentTime + 0.5)
+    } catch (err) {
+      console.warn("Áudio não suportado:", err)
+    }
+  }
+
   // socket: conectar para receber novos pedidos/atualizações
   useEffect(() => {
     const user = getStoredUser()
     const estabId = user?.estabelecimentoId
-    console.log(estabId)
     if (!estabId) return
 
     const cleanup = initSocket(estabId, {
       onNovoPedido: (payload) => {
-        toast({ title: "Novo pedido", description: `Pedido: ${payload?.data?.codigoPedido ?? "novo"}` })
-        // refetch page
-        console.log("DATA");
+        toast({ title: "🔔 Novo pedido", description: `Pedido: ${payload?.data?.codigoPedido ?? "novo"}` })
+        playNotificationSound()
         loadPedidos()
         if (isNotificationSupported()) {
           showNotification("TalaGás - Novo Pedido", { body: `Pedido: ${payload?.data?.codigoPedido ?? ""}` })
         }
       },
       onPedidoAtualizado: (payload) => {
-        toast({ title: "Pedido atualizado", description: `Pedido: ${payload?.data?.codigoPedido ?? "atualizado"}` })
+        toast({ title: "🔄 Pedido atualizado", description: `Pedido: ${payload?.data?.codigoPedido ?? "atualizado"}` })
+        playNotificationSound()
         loadPedidos()
       },
       onPedidoCriado: (payload) => {
-        toast({ title: "Pedido criado", description: `Pedido: ${payload?.data?.codigoPedido ?? "criado"}` })
+        toast({ title: "✨ Pedido criado", description: `Pedido: ${payload?.data?.codigoPedido ?? "criado"}` })
+        playNotificationSound()
         loadPedidos()
         if (isNotificationSupported()) {
           showNotification("TalaGás - Pedido Criado", { body: `Pedido: ${payload?.data?.codigoPedido ?? ""}` })
@@ -192,6 +212,19 @@ export default function PedidosPage() {
       try { cleanup?.() } catch (e) {}
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Mostrar status de conexão no console
+  useEffect(() => {
+    const checkConnection = setInterval(() => {
+      if (isConnected()) {
+        console.log("✅ WebSocket conectado e recebendo eventos")
+      } else {
+        console.warn("⚠️ WebSocket desconectado")
+      }
+    }, 10000)
+
+    return () => clearInterval(checkConnection)
   }, [])
 
   // Buscar transportadores ao abrir modal de encaminhar
@@ -218,8 +251,8 @@ export default function PedidosPage() {
 
     const created = p.createdAt ? new Date(p.createdAt) : new Date()
     const subtotal = itens.reduce((acc, item) => acc + (item.quantidade * item.preco), 0)
-    const frete = (p as any).frete ?? 0
-    const valorTotal = subtotal + frete
+    const totalFrete = (p as any).totalFrete ?? 0
+    const valorTotal = subtotal + totalFrete
     return {
       id: p.codigoPedido ?? p._id,
       codigoPedido: p.codigoPedido,
@@ -230,7 +263,7 @@ export default function PedidosPage() {
       itens,
       valor: valorTotal,
       subtotal,
-      frete,
+      totalFrete,
       status: (p.status as any) ?? "pendente",
       horario: created.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
       metodoPagamento: (p.metodoPagamento as any) ?? "dinheiro",
@@ -870,10 +903,10 @@ export default function PedidosPage() {
                     <Label className="text-muted-foreground">Subtotal (Produtos)</Label>
                     <p className="font-medium">{formatAOA(selectedOrder.subtotal)}</p>
                   </div>
-                  {selectedOrder.frete > 0 && (
+                  {selectedOrder.totalFrete > 0 && (
                     <div>
-                      <Label className="text-muted-foreground">Frete</Label>
-                      <p className="font-medium">{formatAOA(selectedOrder.frete)}</p>
+                      <Label className="text-muted-foreground">Total Frete</Label>
+                      <p className="font-medium">{formatAOA(selectedOrder.totalFrete)}</p>
                     </div>
                   )}
                   {/* Transportador do pedido */}
@@ -925,10 +958,10 @@ export default function PedidosPage() {
                         <span className="font-medium">{formatAOA(item.quantidade * item.preco)}</span>
                       </div>
                     ))}
-                    {selectedOrder.frete > 0 && (
+                    {selectedOrder.totalFrete > 0 && (
                       <div className="flex justify-between rounded-lg border border-dashed p-3 bg-muted/50">
-                        <span className="font-medium">Frete</span>
-                        <span className="font-medium text-primary">{formatAOA(selectedOrder.frete)}</span>
+                        <span className="font-medium">Total Frete</span>
+                        <span className="font-medium text-primary">{formatAOA(selectedOrder.totalFrete)}</span>
                       </div>
                     )}
                     <div className="flex justify-between rounded-lg border-t-2 border-primary p-3 font-bold text-lg">
