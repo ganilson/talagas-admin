@@ -15,7 +15,6 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "TalaGás - Sistema Administrativo",
   description: "Sistema de gestão para TalaGás - Angola",
-  generator: "v0.app",
 }
 
 export default function RootLayout({

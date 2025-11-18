@@ -1,19 +1,44 @@
-export function requestNotificationPermission() {
-  if ("Notification" in window && Notification.permission === "default") {
-    Notification.requestPermission()
+export async function requestNotificationPermission(): Promise<boolean> {
+  if (!("Notification" in window)) {
+    console.log("Este navegador não suporta notificações")
+    return false
   }
+
+  if (Notification.permission === "granted") {
+    console.log("✅ Permissão para notificações já concedida")
+    return true
+  }
+
+  if (Notification.permission !== "denied") {
+    try {
+      const permission = await Notification.requestPermission()
+      const granted = permission === "granted"
+      console.log(granted ? "✅ Permissão concedida" : "❌ Permissão negada")
+      return granted
+    } catch (err) {
+      console.error("Erro ao solicitar permissão:", err)
+      return false
+    }
+  }
+
+  console.log("❌ Permissão para notificações negada pelo usuário")
+  return false
 }
 
-export function showNotification(title: string, options?: NotificationOptions) {
-  if ("Notification" in window && Notification.permission === "granted") {
-    new Notification(title, {
-      icon: "/favicon.ico",
-      badge: "/favicon.ico",
-      ...options,
-    })
-  }
+export function isNotificationSupported(): boolean {
+  return "Notification" in window && Notification.permission === "granted"
 }
 
-export function isNotificationSupported() {
-  return "Notification" in window
+export function showNotification(title: string, options?: NotificationOptions): void {
+  if (isNotificationSupported()) {
+    try {
+      new Notification(title, {
+        icon: "/simbolo.png",
+        badge: "/simbolo.png",
+        ...options,
+      })
+    } catch (err) {
+      console.warn("Erro ao mostrar notificação:", err)
+    }
+  }
 }

@@ -7,6 +7,8 @@ import { useRouter } from "next/navigation"
 import { AppSidebar } from "@/components/app-sidebar"
 import { getStoredUser, type UserData } from "@/lib/auth"
 import { WebSocketProvider } from "@/lib/websocket-context"
+import { initGlobalSocket, registerGlobalSocketCallbacks } from "@/lib/socket-global"
+import { requestNotificationPermission } from "@/lib/notifications"
 
 export default function DashboardLayout({
   children,
@@ -24,6 +26,35 @@ export default function DashboardLayout({
       setUserData(user)
     }
   }, [router])
+
+  useEffect(() => {
+    // Solicitar permissão para notificações
+    requestNotificationPermission()
+
+    // Inicializar socket global
+    const user = getStoredUser()
+    if (user?.estabelecimentoId) {
+      initGlobalSocket(user.estabelecimentoId)
+
+      // Registrar callbacks globais
+      registerGlobalSocketCallbacks({
+        onNovoPedido: (payload) => {
+          console.log("Callback global: novo pedido", payload)
+        },
+        onPedidoAtualizado: (payload) => {
+          console.log("Callback global: pedido atualizado", payload)
+        },
+        onPedidoCriado: (payload) => {
+          console.log("Callback global: pedido criado", payload)
+        },
+      })
+    }
+
+    // Cleanup ao desmontar
+    return () => {
+      // Não desconectar, manter o socket vivo
+    }
+  }, [])
 
   if (!userData) {
     return (

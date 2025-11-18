@@ -28,6 +28,7 @@ import { initSocket } from "@/lib/socket"
 import { getStoredUser } from "@/lib/auth"
 import { apiFetch } from "@/lib/api"
 import { isConnected } from "@/lib/socket"
+import { registerGlobalSocketCallbacks, unregisterGlobalSocketCallbacks } from "@/lib/socket-global"
 
 interface Order {
   id: string
@@ -35,11 +36,11 @@ interface Order {
   endereco: string
   bairro: string
   telefone: string
-  itens: { tipo: string; quantidade: number; preco: number }[]
+  itens: { tipo: string; quantidade: number; preco: number; produtoDeleteado?: boolean }[]
   valor: number
   subtotal: number
   totalFrete: number
-  status: "pendente" | "confirmado" | "entregue" | "cancelado"
+  status: "pendente" | "confirmado" | "acaminho" | "entregue" | "cancelado"
   horario: string
   entregador?: string
   metodoPagamento: "dinheiro" | "transferencia" | "multicaixa"
@@ -70,6 +71,7 @@ export default function PedidosPage() {
     { value: "all", label: "Todos" },
     { value: "pendente", label: "Pendentes" },
     { value: "confirmado", label: "Confirmados" },
+    { value: "acaminho", label: "A Caminho" },
     { value: "entregue", label: "Entregues" },
     { value: "cancelado", label: "Cancelados" },
   ]
@@ -99,10 +101,21 @@ export default function PedidosPage() {
     const itens =
       p.produtos?.map((it) => {
         const pe = it.produtoEmpresaId
+        // Verificar se o produto foi deletado (pe será null ou undefined)
+        if (!pe) {
+          return {
+            tipo: "[Produto deletado]",
+            quantidade: it.quantidade ?? 1,
+            preco: 0,
+            produtoDeleteado: true,
+          }
+        }
         const tipo =
-          typeof (pe as any).produtoId === "object" ? ((pe as any).produtoId?.descricao || "Produto") : String((pe as any).produtoId)
+          typeof (pe as any).produtoId === "object"
+            ? (pe as any).produtoId?.descricao || "Produto"
+            : String((pe as any).produtoId)
         const preco = (pe as any).preco ?? 0
-        return { tipo, quantidade: it.quantidade ?? 1, preco }
+        return { tipo, quantidade: it.quantidade ?? 1, preco, produtoDeleteado: false }
       }) ?? []
 
     const created = p.createdAt ? new Date(p.createdAt) : new Date()
@@ -178,40 +191,32 @@ export default function PedidosPage() {
     }
   }
 
-  // socket: conectar para receber novos pedidos/atualizações
+  // socket: usar callbacks globais apenas nesta página
   useEffect(() => {
     const user = getStoredUser()
     const estabId = user?.estabelecimentoId
     if (!estabId) return
 
-    const cleanup = initSocket(estabId, {
+    // Registrar callbacks específicos desta página
+    registerGlobalSocketCallbacks({
       onNovoPedido: (payload) => {
         toast({ title: "🔔 Novo pedido", description: `Pedido: ${payload?.data?.codigoPedido ?? "novo"}` })
-        playNotificationSound()
         loadPedidos()
-        if (isNotificationSupported()) {
-          showNotification("TalaGás - Novo Pedido", { body: `Pedido: ${payload?.data?.codigoPedido ?? ""}` })
-        }
       },
       onPedidoAtualizado: (payload) => {
         toast({ title: "🔄 Pedido atualizado", description: `Pedido: ${payload?.data?.codigoPedido ?? "atualizado"}` })
-        playNotificationSound()
         loadPedidos()
       },
       onPedidoCriado: (payload) => {
         toast({ title: "✨ Pedido criado", description: `Pedido: ${payload?.data?.codigoPedido ?? "criado"}` })
-        playNotificationSound()
         loadPedidos()
-        if (isNotificationSupported()) {
-          showNotification("TalaGás - Pedido Criado", { body: `Pedido: ${payload?.data?.codigoPedido ?? ""}` })
-        }
       },
     })
 
     return () => {
-      try { cleanup?.() } catch (e) {}
+      // Limpar callbacks ao desmontar
+      unregisterGlobalSocketCallbacks()
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Mostrar status de conexão no console
@@ -243,10 +248,21 @@ export default function PedidosPage() {
     const itens =
       p.produtos?.map((it) => {
         const pe = it.produtoEmpresaId
+        // Verificar se o produto foi deletado (pe será null ou undefined)
+        if (!pe) {
+          return {
+            tipo: "[Produto deletado]",
+            quantidade: it.quantidade ?? 1,
+            preco: 0,
+            produtoDeleteado: true,
+          }
+        }
         const tipo =
-          typeof (pe as any).produtoId === "object" ? ((pe as any).produtoId?.descricao || "Produto") : String((pe as any).produtoId)
+          typeof (pe as any).produtoId === "object"
+            ? (pe as any).produtoId?.descricao || "Produto"
+            : String((pe as any).produtoId)
         const preco = (pe as any).preco ?? 0
-        return { tipo, quantidade: it.quantidade ?? 1, preco }
+        return { tipo, quantidade: it.quantidade ?? 1, preco, produtoDeleteado: false }
       }) ?? []
 
     const created = p.createdAt ? new Date(p.createdAt) : new Date()
@@ -324,7 +340,7 @@ export default function PedidosPage() {
     try {
       await handleUpdateOrderStatus(
         pedido._id,
-        "confirmado",
+        "acaminho",
         { transportadorId: selectedDeliveryPerson }
       )
       // Atualiza o transportadorId no pedido localmente para refletir imediatamente na UI
@@ -342,8 +358,8 @@ export default function PedidosPage() {
           : prev
       )
       toast({
-        title: "Pedido encaminhado",
-        description: `Pedido #${selectedOrder.codigoPedido} encaminhado para ${transportadorObj ? (transportadorObj.nome + " " + (transportadorObj.sobrenome || "")) : selectedDeliveryPerson}.`
+        title: "Pedido a caminho",
+        description: `Pedido #${selectedOrder.codigoPedido} saiu com ${transportadorObj ? (transportadorObj.nome + " " + (transportadorObj.sobrenome || "")) : selectedDeliveryPerson}.`
       })
       setIsForwardDialogOpen(false)
       setSelectedOrder(null)
@@ -389,6 +405,8 @@ export default function PedidosPage() {
         return { label: "Pendente", variant: "destructive" as const, icon: "schedule" }
       case "confirmado":
         return { label: "Aceito", variant: "default" as const, icon: "check_circle" }
+      case "acaminho":
+        return { label: "A Caminho", variant: "outline" as const, icon: "local_shipping" }
       case "entregue":
         return { label: "Entregue", variant: "outline" as const, icon: "done_all" }
       case "cancelado":
@@ -411,16 +429,18 @@ export default function PedidosPage() {
   const OrderCard = ({ order }: { order: Order }) => {
     const statusConfig = getStatusConfig(order.status)
     const isSelected = selectedOrders.has(order.id)
-    // Transportador associado (objeto ou id)
     const transportadorObj = order.transportadorId
       ? transportadores.find(t => t._id === order.transportadorId)
       : null
+    const temProdutoDeleteado = order.itens.some(item => item.produtoDeleteado)
 
     return (
       <div
         className={cn(
           "flex flex-col gap-4 rounded-lg border bg-card p-4 transition-all hover:shadow-md",
           order.status === "pendente" && "border-destructive/50 bg-destructive/5",
+          order.status === "acaminho" && "border-blue-500/50 bg-blue-500/5",
+          temProdutoDeleteado && "border-yellow-500/50 bg-yellow-500/5",
           isSelected && "ring-2 ring-primary",
         )}
       >
@@ -433,6 +453,12 @@ export default function PedidosPage() {
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="font-semibold">Pedido #{order.id}</h3>
               <Badge variant={statusConfig.variant}>{statusConfig.label}</Badge>
+              {temProdutoDeleteado && (
+                <Badge variant="destructive" className="gap-1">
+                  <MaterialIcon icon="warning" className="text-sm" />
+                  Produto deletado
+                </Badge>
+              )}
               <span className="text-xs text-muted-foreground">{order.horario}</span>
               <Badge variant="outline" className="gap-1">
                 <MaterialIcon icon={getMetodoPagamentoIcon(order.metodoPagamento)} className="text-sm" />
@@ -455,8 +481,12 @@ export default function PedidosPage() {
               <p className="text-muted-foreground">
                 {order.endereco}, {order.bairro}
               </p>
-              <p className="text-muted-foreground">
-                {order.itens.map((item) => `${item.quantidade}x ${item.tipo}`).join(", ")} - {formatAOA(order.valor)}
+              <p className={cn("text-muted-foreground", temProdutoDeleteado && "text-yellow-700 font-medium")}>
+                {order.itens.map((item) => (
+                  <span key={item.tipo} className={item.produtoDeleteado ? "line-through opacity-50" : ""}>
+                    {item.quantidade}x {item.tipo}
+                  </span>
+                )).reduce((prev, curr) => [prev, ", ", curr])} - {formatAOA(order.valor)}
               </p>
               {order.entregador && (
                 <p className="flex items-center gap-1 text-muted-foreground">
@@ -488,7 +518,7 @@ export default function PedidosPage() {
             {order.status === "confirmado" && (
               <Button size="sm" onClick={() => { setSelectedOrder(order); setIsForwardDialogOpen(true) }}><MaterialIcon icon="local_shipping" /></Button>
             )}
-            {order.status === "confirmado" && (
+            {order.status === "acaminho" && (
               <Button size="sm" onClick={() => handleCompleteOrder(order.id)}><MaterialIcon icon="done_all" /></Button>
             )}
           </div>
@@ -536,6 +566,16 @@ export default function PedidosPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{pedidos.filter((p) => p.status === "confirmado").length}</div>
+            </CardContent>
+          </Card>
+
+          <Card className="transition-all hover:shadow-lg">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">A Caminho</CardTitle>
+              <MaterialIcon icon="local_shipping" className="text-blue-600" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{pedidos.filter((p) => p.status === "acaminho").length}</div>
             </CardContent>
           </Card>
 
@@ -947,15 +987,42 @@ export default function PedidosPage() {
                   </div>
                 </div>
 
+                {selectedOrder.itens.some(item => item.produtoDeleteado) && (
+                  <div className="rounded-lg border border-yellow-500/50 bg-yellow-500/10 p-4">
+                    <div className="flex gap-2">
+                      <MaterialIcon icon="warning" className="text-lg text-yellow-600 shrink-0" />
+                      <div className="space-y-1">
+                        <p className="font-semibold text-yellow-900">Aviso: Produto deletado</p>
+                        <p className="text-sm text-yellow-800">
+                          Este pedido contém um ou mais produtos que foram deletados do sistema. Os dados deste pedido podem estar incompletos.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div>
                   <Label className="text-muted-foreground">Itens do Pedido</Label>
                   <div className="mt-2 space-y-2">
                     {selectedOrder.itens.map((item, idx) => (
-                      <div key={idx} className="flex justify-between rounded-lg border p-3">
-                        <span>
+                      <div
+                        key={idx}
+                        className={cn(
+                          "flex justify-between rounded-lg border p-3",
+                          item.produtoDeleteado && "border-yellow-500/50 bg-yellow-500/10"
+                        )}
+                      >
+                        <span className={item.produtoDeleteado ? "line-through opacity-50" : ""}>
                           {item.quantidade}x {item.tipo}
+                          {item.produtoDeleteado && (
+                            <span className="ml-2 inline-block rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-semibold text-yellow-700">
+                              DELETADO
+                            </span>
+                          )}
                         </span>
-                        <span className="font-medium">{formatAOA(item.quantidade * item.preco)}</span>
+                        <span className={cn("font-medium", item.produtoDeleteado && "line-through opacity-50")}>
+                          {formatAOA(item.quantidade * item.preco)}
+                        </span>
                       </div>
                     ))}
                     {selectedOrder.totalFrete > 0 && (

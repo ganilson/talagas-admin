@@ -21,10 +21,18 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { useToast } from "@/hooks/use-toast"
-import * as produtoService from "@/services/produtoService" // novo serviço
+import * as produtoService from "@/services/produtoService"
 import {
   Select,
   SelectContent,
@@ -32,6 +40,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { apiFetch } from "@/lib/api"
 
 const CATEGORIAS = ["Garrafas", "Equipamentos", "Acessórios"]
 const FORNECEDORES = ["SonaGás", "Gástem", "ProGás", "SonaGás", "Outros"]
@@ -50,6 +59,9 @@ interface InventoryItem {
   capacidade?: number
   files?: File[]
   frete?: string
+  urls?: string[]
+  createdAt?: string
+  updatedAt?: string
 }
 
 export default function EstoquePage() {
@@ -61,9 +73,7 @@ export default function EstoquePage() {
     totalAkz: number
   } | null>(null)
   const [loading, setLoading] = useState(true)
-
-  const [editItem, setEditItem] = useState<InventoryItem | null>(null)
-  const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [editForm, setEditForm] = useState<{
     id: string
@@ -119,7 +129,6 @@ export default function EstoquePage() {
       const apiResult = await produtoService.updateProdutoEmpresa(id, {
         quantidade: Math.max(0, newQuantity),
       })
-      // mapear resposta para InventoryItem e aplicar (caso backend retorne campos diferentes)
       const produto = apiResult.produtoId || ({} as any)
       const capacidade = produto.capacidade ?? undefined
       const peso = capacidade ? `${capacidade}Kg` : produto.descricao ?? "Botijão"
@@ -144,7 +153,6 @@ export default function EstoquePage() {
         description: "Quantidade atualizada no servidor.",
       })
     } catch (err: any) {
-      // rollback
       setInventory(prev)
       console.error(err)
       toast({
@@ -227,6 +235,7 @@ export default function EstoquePage() {
           formData.append("files", file)
         }
       }
+      
       const res = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL || "https://talagas-api.onrender.com"}/empresas/produto-empresa-with-produto`,
         {
@@ -256,7 +265,6 @@ export default function EstoquePage() {
         files: null,
         frete: "",
       })
-      // Opcional: recarregar lista
       window.location.reload()
     } catch (err: any) {
       toast({
@@ -271,7 +279,7 @@ export default function EstoquePage() {
   const handleEditProduct = async () => {
     if (!editForm) return
     try {
-      let res;
+      let res
       if (editForm.files && editForm.files.length > 0) {
         const formData = new FormData()
         formData.append("descricao", editForm.descricao)
@@ -339,6 +347,33 @@ export default function EstoquePage() {
     }
   }
 
+  const handleDeleteProduct = async (id: string) => {
+    try {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL || "https://talagas-api.onrender.com"}/empresas/produto-empresa/${id}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization:
+              typeof window !== "undefined"
+                ? `Bearer ${JSON.parse(localStorage.getItem("user") || "{}")?.token || ""}`
+                : "",
+          },
+        }
+      )
+      if (!res.ok) throw new Error("Erro ao deletar produto")
+      setInventory((prev) => prev.filter((item) => item.id !== id))
+      setDeleteConfirm(null)
+      toast({ title: "Produto removido", description: "O produto foi deletado com sucesso." })
+    } catch (err: any) {
+      toast({
+        title: "Erro ao deletar produto",
+        description: err?.message ?? "Não foi possível deletar o produto.",
+        variant: "destructive",
+      })
+    }
+  }
+
   const getStockStatus = (quantidade: number, minimo: number) => {
     if (quantidade === 0) return { label: "Esgotado", variant: "destructive" as const }
     if (quantidade < minimo) return { label: "Baixo", variant: "destructive" as const }
@@ -358,13 +393,11 @@ export default function EstoquePage() {
 
         if (!mounted) return
 
-        // Mapear produtos da API para InventoryItem
         const mapped = produtos.map((p) => {
           const produto = p.produtoId || ({} as any)
           const capacidade = produto.capacidade ?? undefined
           const peso = capacidade ? `${capacidade}Kg` : produto.descricao ?? "Botijão"
           const preco = p.preco ?? produto.preco ?? 0
-          // mínimo não vem da API neste endpoint pelo exemplo; usar padrão 10
           const minimo = 10
           return {
             id: p._id,
@@ -373,6 +406,13 @@ export default function EstoquePage() {
             quantidade: p.quantidade ?? 0,
             minimo,
             preco,
+            frete: p.frete,
+            urls: p.urls,
+            createdAt: p.createdAt,
+            updatedAt: p.updatedAt,
+            disponibilidade: p.disponibilidade,
+            categoria: produto.categoria,
+            fornecedor: produto.fornecedor,
           } as InventoryItem
         })
 
@@ -463,7 +503,7 @@ export default function EstoquePage() {
 
         {/* Modal de cadastro de produto */}
         <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Cadastrar Produto</DialogTitle>
               <DialogDescription>Preencha os dados do novo produto</DialogDescription>
@@ -579,6 +619,7 @@ export default function EstoquePage() {
                   <Input
                     type="file"
                     multiple
+                    accept="image/*"
                     onChange={e => setAddForm(f => ({ ...f, files: e.target.files ? Array.from(e.target.files) : null }))}
                   />
                 </div>
@@ -595,7 +636,7 @@ export default function EstoquePage() {
 
         {/* Modal de edição de produto */}
         <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Editar Produto</DialogTitle>
               <DialogDescription>Atualize os dados do produto</DialogDescription>
@@ -712,6 +753,7 @@ export default function EstoquePage() {
                     <Input
                       type="file"
                       multiple
+                      accept="image/*"
                       onChange={e => setEditForm(f => f ? { ...f, files: e.target.files ? Array.from(e.target.files) : null } : f)}
                     />
                   </div>
@@ -727,96 +769,187 @@ export default function EstoquePage() {
           </DialogContent>
         </Dialog>
 
-        {/* Inventory Table */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Gerenciar Botijões</CardTitle>
-            <CardDescription>Controle de estoque de botijões de gás</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {loading ? (
-                <div className="py-8 text-center text-sm text-muted-foreground">
-                  Carregando estoque...
-                </div>
-              ) : (
-                inventory.map((item) => {
-                  const status = getStockStatus(item.quantidade, item.minimo)
-                  return (
-                    <div
-                      key={item.id}
-                      className="flex flex-col gap-4 rounded-lg border border-border bg-card p-4 md:flex-row md:items-center"
-                    >
-                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                        <MaterialIcon
-                          icon="local_gas_station"
-                          className="text-2xl text-primary"
+        {/* Inventory Grid - Cards */}
+        <div className="space-y-4">
+          {loading ? (
+            <Card>
+              <CardContent className="py-12 text-center text-sm text-muted-foreground">
+                Carregando estoque...
+              </CardContent>
+            </Card>
+          ) : inventory.length === 0 ? (
+            <Card>
+              <CardContent className="py-12 text-center">
+                <MaterialIcon icon="inventory_2" className="mx-auto mb-4 text-4xl text-muted-foreground" />
+                <p className="text-muted-foreground">Nenhum produto cadastrado</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {inventory.map((item) => {
+                const status = getStockStatus(item.quantidade, item.minimo)
+                const createdDate = item.createdAt ? new Date(item.createdAt).toLocaleDateString("pt-AO") : "-"
+                const hasImages = item.urls && item.urls.length > 0
+
+                return (
+                  <Card key={item.id} className="flex flex-col overflow-hidden hover:shadow-lg transition-shadow">
+                    {/* Imagem do Produto */}
+                    <div className="relative h-40 bg-muted/50 overflow-hidden">
+                      {hasImages ? (
+                        <img
+                          src={item.urls![0]}
+                          alt={item.tipo}
+                          className="w-full h-full object-cover"
                         />
-                      </div>
-
-                      <div className="flex-1 space-y-1">
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-semibold">
-                            {item.tipo} {item.peso}
-                          </h3>
-                          <Badge variant={status.variant}>{status.label}</Badge>
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <MaterialIcon icon="image_not_supported" className="text-4xl text-muted-foreground" />
                         </div>
-                        <p className="text-sm text-muted-foreground">
-                          Quantidade: {item.quantidade} | Mínimo: {item.minimo} | Preço:{" "}
-                          {item.preco} Kzs
-                        </p>
+                      )}
+                      {/* Badge de Status */}
+                      <div className="absolute top-2 right-2">
+                        <Badge variant={status.variant}>{status.label}</Badge>
                       </div>
-
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          onClick={() => handleUpdateStock(item.id, item.quantidade - 1)}
-                        >
-                          <MaterialIcon icon="remove" />
-                        </Button>
-                        <span className="w-12 text-center font-semibold">
-                          {item.quantidade}
-                        </span>
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          onClick={() => handleUpdateStock(item.id, item.quantidade + 1)}
-                        >
-                          <MaterialIcon icon="add" />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          onClick={() => {
-                            setEditForm({
-                              id: item.id,
-                              descricao: item.descricao ?? item.tipo,
-                              tipo: item.tipo,
-                              capacidade: item.capacidade ? String(item.capacidade) : "",
-                              preco: item.preco ? String(item.preco) : "",
-                              fornecedor: item.fornecedor ?? "",
-                              estabelecimentoId: "",
-                              disponibilidade: item.disponibilidade ?? "disponivel",
-                              quantidade: String(item.quantidade),
-                              categoria: item.categoria ?? "Garrafas",
-                              files: null,
-                              frete: item.frete ?? "",
-                            })
-                            setIsEditDialogOpen(true)
-                          }}
-                        >
-                          <MaterialIcon icon="edit" />
-                        </Button>
-                      </div>
+                      {/* Badge de Categoria */}
+                      {item.categoria && (
+                        <div className="absolute top-2 left-2">
+                          <Badge variant="outline" className="text-xs">{item.categoria}</Badge>
+                        </div>
+                      )}
                     </div>
-                  )
-                })
-              )}
+
+                    {/* Conteúdo */}
+                    <CardContent className="flex-1 pt-4 pb-3">
+                      <div className="space-y-3">
+                        {/* Título */}
+                        <div>
+                          <h3 className="font-semibold text-base line-clamp-1">{item.tipo}</h3>
+                          <p className="text-xs text-muted-foreground">{item.peso}</p>
+                        </div>
+
+                        {/* Informações principais */}
+                        <div className="space-y-2 text-sm">
+                          <div className="flex justify-between items-center">
+                            <span className="text-muted-foreground">Quantidade:</span>
+                            <span className="font-semibold">{item.quantidade}</span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-muted-foreground">Preço:</span>
+                            <span className="font-semibold">{item.preco} Kzs</span>
+                          </div>
+                          {item.frete && (
+                            <div className="flex justify-between items-center">
+                              <span className="text-muted-foreground">Frete:</span>
+                              <span className="font-semibold">{item.frete} Kzs</span>
+                            </div>
+                          )}
+                          {item.fornecedor && (
+                            <div className="flex justify-between items-center">
+                              <span className="text-muted-foreground">Fornecedor:</span>
+                              <span className="text-xs">{item.fornecedor}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Data de criação */}
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground pt-2 border-t">
+                          <MaterialIcon icon="calendar_today" className="text-sm" />
+                          Criado em {createdDate}
+                        </div>
+                      </div>
+                    </CardContent>
+
+                    {/* Ações */}
+                    <div className="border-t p-3 grid grid-cols-3 gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleUpdateStock(item.id, item.quantidade - 1)}
+                        title="Diminuir quantidade"
+                      >
+                        <MaterialIcon icon="remove" className="text-sm" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setEditForm({
+                            id: item.id,
+                            descricao: item.descricao ?? item.tipo,
+                            tipo: item.tipo,
+                            capacidade: item.capacidade ? String(item.capacidade) : "",
+                            preco: item.preco ? String(item.preco) : "",
+                            fornecedor: item.fornecedor ?? "",
+                            estabelecimentoId: "",
+                            disponibilidade: item.disponibilidade ?? "disponivel",
+                            quantidade: String(item.quantidade),
+                            categoria: item.categoria ?? "Garrafas",
+                            files: null,
+                            frete: item.frete ?? "",
+                          })
+                          setIsEditDialogOpen(true)
+                        }}
+                        title="Editar produto"
+                      >
+                        <MaterialIcon icon="edit" className="text-sm" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleUpdateStock(item.id, item.quantidade + 1)}
+                        title="Aumentar quantidade"
+                      >
+                        <MaterialIcon icon="add" className="text-sm" />
+                      </Button>
+                    </div>
+
+                    {/* Botão deletar - sempre visível */}
+                    <div className="border-t p-3">
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="w-full"
+                        onClick={() => setDeleteConfirm(item.id)}
+                      >
+                        <MaterialIcon icon="delete" className="mr-2 text-sm" />
+                        Remover Produto
+                      </Button>
+                    </div>
+                  </Card>
+                )
+              })}
             </div>
-          </CardContent>
-        </Card>
+          )}
+        </div>
       </div>
+
+      {/* Alert Dialog para confirmação de exclusão */}
+      <AlertDialog open={deleteConfirm !== null} onOpenChange={() => setDeleteConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remover Produto</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem a certeza que deseja remover este produto? Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="my-4 p-3 bg-destructive/10 rounded-lg border border-destructive/20">
+            <p className="text-sm text-destructive font-semibold">
+              Produto: {inventory.find(p => p.id === deleteConfirm)?.tipo}
+            </p>
+          </div>
+          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={() => {
+              if (deleteConfirm) {
+                handleDeleteProduct(deleteConfirm)
+              }
+            }}
+            className="bg-destructive hover:bg-destructive/90"
+          >
+            Remover
+          </AlertDialogAction>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
