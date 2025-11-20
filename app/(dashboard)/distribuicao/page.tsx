@@ -71,8 +71,8 @@ export default function DistribuicaoPage() {
         nome: r.descricao,
         endereco: r.endereco,
         telefone: r.telefone || "",
-        lat: r.coordinates?.coordinates?.[0],
         lng: r.coordinates?.coordinates?.[1],
+        lat: r.coordinates?.coordinates?.[0],
         qrCodeLink: r.qrCodeLink,
         isActive: r.isActive,
         createdAt: r.createdAt,
@@ -100,13 +100,18 @@ export default function DistribuicaoPage() {
     try {
       const response = await fetch(
         `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(locationSearch + ", Angola")}&limit=5`,
-        { headers: { "Accept-Language": "pt" } }
+        {
+          headers: {
+            "Accept-Language": "pt",
+            "User-Agent": "TalagasAdmin/1.0"
+          }
+        }
       )
       const results = await response.json()
       setLocationSuggestions(results)
     } catch (err) {
-      console.error(err)
-      toast({ title: "Erro na pesquisa", variant: "destructive" })
+      console.error('Erro ao pesquisar localização:', err)
+      toast({ title: "Erro na pesquisa de endereço", description: "Tente novamente", variant: "destructive" })
     } finally {
       setLocationLoading(false)
     }
@@ -126,12 +131,24 @@ export default function DistribuicaoPage() {
   }
 
   const handleMapClick = (evt: any) => {
-    if (!isLeftSidebarOpen) return
+    console.log('🖱️ MAP CLICKED - isLeftSidebarOpen:', isLeftSidebarOpen)
+
+    if (!isLeftSidebarOpen) {
+      console.log('⚠️ Sidebar fechada, ignorando clique')
+      return
+    }
 
     const { lat, lng } = evt.lngLat
+    console.log('📍 Coordenadas clicadas:', { lat, lng })
+
     setTempLat(lat)
     setTempLng(lng)
     setIsFormEnabled(true)
+
+    toast({
+      title: "📍 Coordenada selecionada",
+      description: `Lng: ${lng.toFixed(6)}, Lat: ${lat.toFixed(6)}`
+    })
   }
 
   const handleAddSubmit = async (e?: React.FormEvent) => {
@@ -144,27 +161,30 @@ export default function DistribuicaoPage() {
     try {
       const payload = {
         descricao: nome.trim(),
-        coordinates: [tempLat, tempLng] as [number, number],
+        coordinates: [tempLng, tempLat] as [number, number],
         endereco,
         telefone
       }
+      console.log('📤 Enviando para backend:', payload)
       const created = await pontoService.createPonto(payload)
 
       const novo: PontoVenda = {
         id: created._id,
         nome: created.descricao,
-        lat: created.coordinates?.coordinates?.[0],
         lng: created.coordinates?.coordinates?.[1],
+        lat: created.coordinates?.coordinates?.[0],
         qrCodeLink: created.qrCodeLink,
         endereco: created.endereco,
         telefone: created.telefone
       }
 
+      console.log('✅ Ponto criado:', novo)
       setPontos((prev) => [novo, ...prev])
       resetRegistrationForm()
       setIsLeftSidebarOpen(false)
       toast({ title: "✅ Ponto criado!" })
     } catch (err: any) {
+      console.error('❌ Erro ao criar:', err)
       toast({ title: "Erro ao criar ponto", description: err?.message, variant: "destructive" })
     }
   }
@@ -273,6 +293,20 @@ export default function DistribuicaoPage() {
     setIsRightSidebarOpen(true)
   }
 
+  const showPointOnMap = (point: PontoVenda) => {
+    if (point.lat && point.lng) {
+      console.log('📍 Centralizando no ponto:', { lat: point.lat, lng: point.lng })
+      setViewState(prev => ({
+        ...prev,
+        latitude: point.lat!,
+        longitude: point.lng!,
+        zoom: 16
+      }))
+      setIsRightSidebarOpen(false)
+      toast({ title: "📍 Mostrando no mapa", description: point.nome })
+    }
+  }
+
   return (
     <div className="relative h-screen w-full">
       <Map
@@ -352,6 +386,7 @@ export default function DistribuicaoPage() {
           size="lg"
           className="rounded-full shadow-xl h-14 w-14 p-0"
           onClick={() => {
+            console.log('🆕 Abrindo painel de cadastro')
             setIsLeftSidebarOpen(true)
             resetRegistrationForm()
           }}
@@ -397,7 +432,7 @@ export default function DistribuicaoPage() {
                     <div className="flex items-center gap-2">
                       <MaterialIcon icon="location_on" className="text-muted-foreground" />
                       <span className="text-xs font-mono">
-                        {selectedPoint.lng?.toFixed(6)}, {selectedPoint.lat?.toFixed(6)}
+                        Lng: {selectedPoint.lng?.toFixed(6)}, Lat: {selectedPoint.lat?.toFixed(6)}
                       </span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -419,23 +454,33 @@ export default function DistribuicaoPage() {
                     </Card>
                   )}
 
-                  <div className="flex gap-2 pt-4">
+                  <div className="space-y-2 pt-4">
                     <Button
-                      variant="outline"
-                      className="flex-1"
-                      onClick={() => downloadQR(selectedPoint)}
+                      variant="default"
+                      className="w-full"
+                      onClick={() => showPointOnMap(selectedPoint)}
                     >
-                      <MaterialIcon icon="download" className="mr-2" />
-                      Baixar QR
+                      <MaterialIcon icon="place" className="mr-2" />
+                      Ver no Mapa
                     </Button>
-                    <Button
-                      variant="destructive"
-                      className="flex-1"
-                      onClick={() => removePonto(selectedPoint.id)}
-                    >
-                      <MaterialIcon icon="delete" className="mr-2" />
-                      Remover
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        className="flex-1"
+                        onClick={() => downloadQR(selectedPoint)}
+                      >
+                        <MaterialIcon icon="download" className="mr-2" />
+                        Baixar QR
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        className="flex-1"
+                        onClick={() => removePonto(selectedPoint.id)}
+                      >
+                        <MaterialIcon icon="delete" className="mr-2" />
+                        Remover
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -445,113 +490,109 @@ export default function DistribuicaoPage() {
       </Sheet>
 
       <Sheet open={isLeftSidebarOpen} onOpenChange={(open) => {
+        console.log('📂 Sidebar state changing:', open)
         setIsLeftSidebarOpen(open)
         if (!open) resetRegistrationForm()
       }} modal={false}>
-        <SheetContent side="left" className="w-full sm:w-[400px] p-0">
-          <ScrollArea className="h-full">
-            <div className="p-6 space-y-6">
-              <SheetHeader>
-                <SheetTitle>Cadastrar Novo Ponto</SheetTitle>
-                <SheetDescription>
-                  Clique no mapa para marcar a localização exata
-                </SheetDescription>
-              </SheetHeader>
+        <SheetContent
+          side="left"
+          className="w-full sm:w-[400px] p-0 flex flex-col h-full"
+          onInteractOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => e.preventDefault()}
+        >
+          <div className="flex-1 overflow-y-auto p-3">
+            <SheetHeader className="mb-3">
+              <SheetTitle className="text-base">Cadastrar Novo Ponto</SheetTitle>
+              <SheetDescription className="text-xs">
+                Clique no mapa para marcar
+              </SheetDescription>
+            </SheetHeader>
 
-              <div className="space-y-4">
-                <div className={`p-4 rounded-lg text-sm transition-all ${isFormEnabled
-                  ? 'bg-green-50 dark:bg-green-950 border-2 border-green-500'
-                  : 'bg-orange-50 dark:bg-orange-950 border-2 border-orange-500'
-                  }`}>
-                  <p className="font-medium mb-2 flex items-center gap-2">
-                    {isFormEnabled ? (
-                      <>
-                        <MaterialIcon icon="check_circle" className="text-green-600" />
-                        <span className="text-green-700 dark:text-green-300">Localização confirmada!</span>
-                      </>
-                    ) : (
-                      <>
-                        <MaterialIcon icon="touch_app" className="text-orange-600" />
-                        <span className="text-orange-700 dark:text-orange-300">Clique no mapa</span>
-                      </>
-                    )}
-                  </p>
-                  {!isFormEnabled && (
-                    <p className="text-xs text-muted-foreground">
-                      Clique em qualquer lugar do mapa para marcar as coordenadas. Você pode clicar várias vezes para ajustar.
-                    </p>
+            <div className="space-y-2.5">
+              <div className={`p-2.5 rounded-lg text-xs transition-all ${isFormEnabled
+                ? 'bg-green-50 dark:bg-green-950 border-2 border-green-500'
+                : 'bg-orange-50 dark:bg-orange-950 border-2 border-orange-500'
+                }`}>
+                <p className="font-medium flex items-center gap-2">
+                  {isFormEnabled ? (
+                    <>
+                      <MaterialIcon icon="check_circle" className="text-green-600 text-sm" />
+                      <span className="text-green-700 dark:text-green-300">Confirmado!</span>
+                    </>
+                  ) : (
+                    <>
+                      <MaterialIcon icon="touch_app" className="text-orange-600 text-sm" />
+                      <span className="text-orange-700 dark:text-orange-300">Clique no mapa</span>
+                    </>
                   )}
-                </div>
+                </p>
+              </div>
 
-                <div className="space-y-2">
-                  <Label>Pesquisar Endereço (opcional)</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      value={locationSearch}
-                      onChange={e => setLocationSearch(e.target.value)}
-                      placeholder="Ex: Talatona..."
-                      onKeyDown={e => e.key === "Enter" && handleLocationSearch()}
-                    />
-                    <Button size="icon" onClick={handleLocationSearch} disabled={locationLoading}>
-                      <MaterialIcon icon="search" className={locationLoading ? "animate-spin" : ""} />
-                    </Button>
-                  </div>
-                  {locationSuggestions.length > 0 && (
-                    <div className="border rounded-md max-h-40 overflow-y-auto bg-popover">
-                      {locationSuggestions.map((loc, i) => (
-                        <div
-                          key={i}
-                          className="p-2 hover:bg-accent cursor-pointer text-sm border-b last:border-0"
-                          onClick={() => selectLocation(loc)}
-                        >
-                          <div className="font-medium">{loc.display_name.split(",")[0]}</div>
-                          <div className="text-xs text-muted-foreground line-clamp-1">{loc.display_name}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {tempLat && tempLng && (
-                  <div className="p-3 bg-muted rounded-md">
-                    <p className="text-xs text-muted-foreground mb-1">📍 Coordenadas selecionadas:</p>
-                    <p className="text-sm font-mono">
-                      Lng: {tempLng.toFixed(6)} | Lat: {tempLat.toFixed(6)}
-                    </p>
-                  </div>
-                )}
-
-                <fieldset disabled={!isFormEnabled} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Nome *</Label>
-                    <Input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex: Mercadinho Central" />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Endereço</Label>
-                    <Input value={endereco} onChange={e => setEndereco(e.target.value)} />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Telefone</Label>
-                    <Input value={telefone} onChange={e => setTelefone(e.target.value)} placeholder="+244 9..." />
-                  </div>
-
-                  <Button onClick={handleAddSubmit} className="w-full" disabled={!isFormEnabled}>
-                    <MaterialIcon icon="save" className="mr-2" />
-                    Salvar Ponto
+              <div className="space-y-1">
+                <Label className="text-xs">Pesquisar (opcional)</Label>
+                <div className="flex gap-1.5">
+                  <Input
+                    value={locationSearch}
+                    onChange={e => setLocationSearch(e.target.value)}
+                    placeholder="Ex: Talatona..."
+                    onKeyDown={e => e.key === "Enter" && handleLocationSearch()}
+                    className="h-8 text-xs"
+                  />
+                  <Button size="sm" onClick={handleLocationSearch} disabled={locationLoading} className="h-8 w-8 p-0">
+                    <MaterialIcon icon="search" className={`text-sm ${locationLoading ? "animate-spin" : ""}`} />
                   </Button>
-                </fieldset>
-
-                {!isFormEnabled && (
-                  <div className="p-4 bg-muted/50 rounded-lg text-sm text-muted-foreground text-center">
-                    <MaterialIcon icon="info" className="mb-2 text-4xl" />
-                    <p>Aguardando seleção no mapa</p>
+                </div>
+                {locationSuggestions.length > 0 && (
+                  <div className="border rounded-md max-h-28 overflow-y-auto bg-popover text-xs">
+                    {locationSuggestions.map((loc, i) => (
+                      <div
+                        key={i}
+                        className="p-1.5 hover:bg-accent cursor-pointer border-b last:border-0"
+                        onClick={() => selectLocation(loc)}
+                      >
+                        <div className="font-medium line-clamp-1">{loc.display_name.split(",")[0]}</div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
+
+              {tempLat && tempLng && (
+                <div className="p-2 bg-muted rounded-md text-xs font-mono">
+                  📍 Lng: {tempLng.toFixed(6)}, Lat: {tempLat.toFixed(6)}
+                </div>
+              )}
+
+              <fieldset disabled={!isFormEnabled} className="space-y-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Nome *</Label>
+                  <Input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex: Mercadinho" className="h-8 text-xs" />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs">Endereço</Label>
+                  <Input value={endereco} onChange={e => setEndereco(e.target.value)} className="h-8 text-xs" />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs">Telefone</Label>
+                  <Input value={telefone} onChange={e => setTelefone(e.target.value)} placeholder="+244 9..." className="h-8 text-xs" />
+                </div>
+
+                <Button onClick={handleAddSubmit} className="w-full h-9 text-xs" disabled={!isFormEnabled}>
+                  <MaterialIcon icon="save" className="mr-2 text-sm" />
+                  Salvar
+                </Button>
+              </fieldset>
+
+              {!isFormEnabled && (
+                <div className="p-2 bg-muted/50 rounded-lg text-xs text-muted-foreground text-center">
+                  <MaterialIcon icon="info" className="mb-1 text-2xl" />
+                  <p>Aguardando seleção</p>
+                </div>
+              )}
             </div>
-          </ScrollArea>
+          </div>
         </SheetContent>
       </Sheet>
 
