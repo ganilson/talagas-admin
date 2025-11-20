@@ -49,6 +49,8 @@ interface Order {
   tempoEntrega?: number
   observacoes?: string
   codigoPedido?: string
+  pontoDeAtendimento?: any
+  transportadorId?: string | { [key: string]: any }
 }
 
 const deliveryPersons = ["João Silva", "Pedro Costa", "Ana Souza", "Carlos Mendes"]
@@ -119,6 +121,8 @@ export default function PedidosPage() {
       }) ?? []
 
     const created = p.createdAt ? new Date(p.createdAt) : new Date()
+    const enderecoCliente = (p as any).endereco ?? pa?.endereco ?? pa?.descricao ?? "-"
+    const transportadorId = (p as any).transportadorId
     const subtotal = itens.reduce((acc, item) => acc + (item.quantidade * item.preco), 0)
     const totalFrete = (p as any).totalFrete ?? 0
     const valorTotal = subtotal + totalFrete
@@ -126,7 +130,7 @@ export default function PedidosPage() {
       id: p.codigoPedido ?? p._id,
       codigoPedido: p.codigoPedido,
       cliente: p.nomeCompleto ?? "-",
-      endereco: pa?.endereco ?? pa?.descricao ?? "-",
+      endereco: enderecoCliente,
       bairro: pa?.descricao ?? "-",
       telefone: p?.telefone ?? "-",
       itens,
@@ -139,9 +143,8 @@ export default function PedidosPage() {
       createdAt: created,
       updatedAt: p.updatedAt ? new Date(p.updatedAt) : created,
       observacoes: undefined,
-      codigoPedido: p.codigoPedido,
       pontoDeAtendimento: pa,
-      transportadorId: (p as any).transportadorId,
+      transportadorId,
     }
   }
 
@@ -200,14 +203,17 @@ export default function PedidosPage() {
     // Registrar callbacks específicos desta página
     registerGlobalSocketCallbacks({
       onNovoPedido: (payload) => {
+        playNotificationSound()
         toast({ title: "🔔 Novo pedido", description: `Pedido: ${payload?.data?.codigoPedido ?? "novo"}` })
         loadPedidos()
       },
       onPedidoAtualizado: (payload) => {
+        playNotificationSound()
         toast({ title: "🔄 Pedido atualizado", description: `Pedido: ${payload?.data?.codigoPedido ?? "atualizado"}` })
         loadPedidos()
       },
       onPedidoCriado: (payload) => {
+        playNotificationSound()
         toast({ title: "✨ Pedido criado", description: `Pedido: ${payload?.data?.codigoPedido ?? "criado"}` })
         loadPedidos()
       },
@@ -266,6 +272,8 @@ export default function PedidosPage() {
       }) ?? []
 
     const created = p.createdAt ? new Date(p.createdAt) : new Date()
+    const enderecoCliente = (p as any).endereco ?? pa?.endereco ?? pa?.descricao ?? "-"
+    const transportadorId = (p as any).transportadorId
     const subtotal = itens.reduce((acc, item) => acc + (item.quantidade * item.preco), 0)
     const totalFrete = (p as any).totalFrete ?? 0
     const valorTotal = subtotal + totalFrete
@@ -273,7 +281,7 @@ export default function PedidosPage() {
       id: p.codigoPedido ?? p._id,
       codigoPedido: p.codigoPedido,
       cliente: p.nomeCompleto ?? "-",
-      endereco: pa?.endereco ?? pa?.descricao ?? "-",
+      endereco: enderecoCliente,
       bairro: pa?.descricao ?? "-",
       telefone: p?.telefone ?? "-",
       itens,
@@ -286,9 +294,8 @@ export default function PedidosPage() {
       createdAt: created,
       updatedAt: p.updatedAt ? new Date(p.updatedAt) : created,
       observacoes: undefined,
-      codigoPedido: p.codigoPedido,
       pontoDeAtendimento: pa,
-      transportadorId: (p as any).transportadorId,
+      transportadorId,
     }
   })
 
@@ -312,7 +319,11 @@ export default function PedidosPage() {
   }
 
   // Atualizar status com PUT no backend (atualização otimista)
-  const handleUpdateOrderStatus = async (pedidoId: string, newStatus: "pendente" | "confirmado" | "entregue" | "cancelado", extra?: any) => {
+  const handleUpdateOrderStatus = async (
+    pedidoId: string,
+    newStatus: Order["status"],
+    extra?: any
+  ) => {
     const prev = pedidos
     setPedidos((cur) => cur.map((p) => (p._id === pedidoId ? { ...p, status: newStatus, ...extra } : p)))
     try {
@@ -481,12 +492,14 @@ export default function PedidosPage() {
               <p className="text-muted-foreground">
                 {order.endereco}, {order.bairro}
               </p>
-              <p className={cn("text-muted-foreground", temProdutoDeleteado && "text-yellow-700 font-medium")}>
-                {order.itens.map((item) => (
-                  <span key={item.tipo} className={item.produtoDeleteado ? "line-through opacity-50" : ""}>
+              <p className={cn("text-muted-foreground flex flex-wrap gap-1", temProdutoDeleteado && "text-yellow-700 font-medium")}>
+                {order.itens.map((item, idx) => (
+                  <span key={`${item.tipo}-${idx}`} className={item.produtoDeleteado ? "line-through opacity-50" : ""}>
                     {item.quantidade}x {item.tipo}
+                    {idx < order.itens.length - 1 && <span>,</span>}
                   </span>
-                )).reduce((prev, curr) => [prev, ", ", curr])} - {formatAOA(order.valor)}
+                ))}
+                <span className="ml-1">- {formatAOA(order.valor)}</span>
               </p>
               {order.entregador && (
                 <p className="flex items-center gap-1 text-muted-foreground">
@@ -820,7 +833,7 @@ export default function PedidosPage() {
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <MaterialIcon icon="shopping_cart" className="mb-4 text-5xl text-muted-foreground" />
                 <p className="text-muted-foreground">Nenhum pedido encontrado</p>
-                <Button variant="link" onClick={() => { setPedidoFilters({ page:1, limit: pedidoFilters.limit }); setCodigoPedidoInput(""); }}>Recarregar</Button>
+                <Button variant="link" onClick={() => { setPedidoFilters({ page: 1, limit: pedidoFilters.limit }); setCodigoPedidoInput(""); }}>Recarregar</Button>
               </div>
             ) : (
               <>
@@ -925,10 +938,17 @@ export default function PedidosPage() {
                     <Label className="text-muted-foreground">Telefone</Label>
                     <p className="font-medium">{selectedOrder.telefone}</p>
                   </div>
-                  <div className="md:col-span-2">
-                    <Label className="text-muted-foreground">Endereço</Label>
+                  <div>
+                    <Label className="text-muted-foreground">Endereço do Cliente</Label>
+                    <p className="font-medium">{selectedOrder.endereco}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Ponto de Atendimento</Label>
                     <p className="font-medium">
-                      {selectedOrder.endereco}, {selectedOrder.bairro}
+                      {selectedOrder.pontoDeAtendimento?.descricao ||
+                        selectedOrder.pontoDeAtendimento?.endereco ||
+                        selectedOrder.bairro ||
+                        "-"}
                     </p>
                   </div>
                   <div>

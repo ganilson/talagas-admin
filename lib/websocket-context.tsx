@@ -48,7 +48,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const connect = useCallback(() => {
     // In a real app, this would connect to your WebSocket server
     // For demo purposes, we'll simulate WebSocket behavior
-    console.log("[v0] WebSocket: Attempting to connect...")
+    console.log("WebSocket: Attempting to connect...")
     setConnectionStatus("connecting")
 
     // Simulate connection delay
@@ -56,7 +56,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       setIsConnected(true)
       setConnectionStatus("connected")
       setReconnectAttempts(0)
-      console.log("[v0] WebSocket: Connected successfully")
+      console.log("WebSocket: Connected successfully")
 
       toast({
         title: "Conectado",
@@ -93,16 +93,16 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     }
     setIsConnected(false)
     setConnectionStatus("disconnected")
-    console.log("[v0] WebSocket: Disconnected")
+    console.log("WebSocket: Disconnected")
   }, [ws])
 
   const sendMessage = useCallback(
     (message: WebSocketMessage) => {
       if (isConnected) {
-        console.log("[v0] WebSocket: Sending message", message)
+        console.log("WebSocket: Sending message", message)
         // In a real app, you would send via ws.send(JSON.stringify(message))
       } else {
-        console.warn("[v0] WebSocket: Cannot send message, not connected")
+        console.warn("WebSocket: Cannot send message, not connected")
       }
     },
     [isConnected],
@@ -123,7 +123,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     if (!isConnected && connectionStatus === "disconnected" && reconnectAttempts < 5) {
       const timeout = setTimeout(
         () => {
-          console.log(`[v0] WebSocket: Reconnecting... (attempt ${reconnectAttempts + 1})`)
+          console.log(`WebSocket: Reconnecting... (attempt ${reconnectAttempts + 1})`)
           setReconnectAttempts((prev) => prev + 1)
           connect()
         },

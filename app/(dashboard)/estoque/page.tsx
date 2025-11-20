@@ -82,7 +82,6 @@ export default function EstoquePage() {
     capacidade: string
     preco: string
     fornecedor: string
-    estabelecimentoId: string
     disponibilidade: "disponivel" | "indisponivel"
     quantidade: string
     categoria: string
@@ -97,7 +96,6 @@ export default function EstoquePage() {
     capacidade: string
     preco: string
     fornecedor: string
-    estabelecimentoId: string
     disponibilidade: "disponivel" | "indisponivel"
     quantidade: string
     categoria: string
@@ -109,13 +107,13 @@ export default function EstoquePage() {
     capacidade: "",
     preco: "",
     fornecedor: "",
-    estabelecimentoId: "",
     disponibilidade: "disponivel",
     quantidade: "",
     categoria: "Garrafas",
     files: null,
     frete: "",
   })
+  const [addErrors, setAddErrors] = useState<Record<string, string>>({})
 
   // Atualiza quantidade no local + no backend (otimista)
   const handleUpdateStock = async (id: string, newQuantity: number) => {
@@ -217,19 +215,81 @@ export default function EstoquePage() {
   }
 
   // Adicionar produto
+  const clearAddError = (field: string) =>
+    setAddErrors((prev) => {
+      if (!(field in prev)) return prev
+      const { [field]: _removed, ...rest } = prev
+      return rest
+    })
+
+  const validateAddForm = (): Record<string, string> => {
+    const errors: Record<string, string> = {}
+    const descricao = addForm.descricao.trim()
+    if (descricao.length < 3) {
+      errors.descricao = "Descrição deve ter pelo menos 3 caracteres."
+    }
+    if (!addForm.tipo.trim()) {
+      errors.tipo = "Tipo é obrigatório."
+    }
+    if (!addForm.capacidade.trim()) {
+      errors.capacidade = "Capacidade é obrigatória."
+    }
+    const parsedPreco = Number(addForm.preco)
+    if (!addForm.preco.trim() || Number.isNaN(parsedPreco) || parsedPreco <= 0) {
+      errors.preco = "Preço deve ser um número positivo."
+    }
+    if (addForm.quantidade.trim()) {
+      const parsedQuantidade = Number(addForm.quantidade)
+      if (Number.isNaN(parsedQuantidade) || parsedQuantidade < 0) {
+        errors.quantidade = "Quantidade deve ser um número maior ou igual a zero."
+      }
+    }
+    if (!["disponivel", "indisponivel"].includes(addForm.disponibilidade)) {
+      errors.disponibilidade = "Disponibilidade inválida."
+    }
+    if (addForm.frete.trim()) {
+      const parsedFrete = Number(addForm.frete)
+      if (Number.isNaN(parsedFrete) || parsedFrete < 0) {
+        errors.frete = "Frete deve ser um número maior ou igual a zero."
+      }
+    }
+    return errors
+  }
+
   const handleAddProduct = async () => {
     try {
+      const validation = validateAddForm()
+      if (Object.keys(validation).length > 0) {
+        setAddErrors(validation)
+        toast({
+          title: "Corrija os campos obrigatórios",
+          description: "Verifique os dados destacados antes de continuar.",
+          variant: "destructive",
+        })
+        return
+      }
+      setAddErrors({})
+
+      const descricao = addForm.descricao.trim()
+      const tipo = addForm.tipo.trim()
+      const capacidade = addForm.capacidade.trim()
+      const fornecedor = addForm.fornecedor.trim()
+      const categoria = addForm.categoria.trim()
+      const parsedPreco = Number(addForm.preco)
+      const parsedQuantidade = addForm.quantidade.trim() !== "" ? Number(addForm.quantidade) : undefined
+      const parsedFrete = addForm.frete.trim() !== "" ? Number(addForm.frete) : undefined
+      const disponibilidadeEnum = addForm.disponibilidade
+
       const formData = new FormData()
-      if (addForm.descricao) formData.append("descricao", addForm.descricao)
-      if (addForm.tipo) formData.append("tipo", addForm.tipo)
-      if (addForm.capacidade) formData.append("capacidade", addForm.capacidade)
-      if (addForm.preco) formData.append("preco", addForm.preco)
-      if (addForm.fornecedor) formData.append("fornecedor", addForm.fornecedor)
-      if (addForm.estabelecimentoId) formData.append("estabelecimentoId", addForm.estabelecimentoId)
-      if (addForm.disponibilidade) formData.append("disponibilidade", addForm.disponibilidade)
-      if (addForm.quantidade) formData.append("quantidade", addForm.quantidade)
-      if (addForm.categoria) formData.append("categoria", addForm.categoria)
-      if (addForm.frete) formData.append("frete", addForm.frete)
+      formData.append("descricao", descricao)
+      formData.append("tipo", tipo)
+      formData.append("capacidade", capacidade)
+      formData.append("preco", String(parsedPreco))
+      formData.append("fornecedor", fornecedor)
+      formData.append("disponibilidade", disponibilidadeEnum)
+      formData.append("categoria", categoria)
+      if (parsedQuantidade !== undefined) formData.append("quantidade", String(parsedQuantidade))
+      if (parsedFrete !== undefined) formData.append("frete", String(parsedFrete))
       if (addForm.files && addForm.files.length > 0) {
         for (const file of addForm.files) {
           formData.append("files", file)
@@ -249,7 +309,26 @@ export default function EstoquePage() {
           body: formData,
         },
       )
-      if (!res.ok) throw new Error("Erro ao cadastrar produto")
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        const serverErrors: string[] = data?.errors ?? []
+        const errorMessage = serverErrors.length ? serverErrors.join(" ") : data?.message ?? "Erro ao cadastrar produto"
+        if (serverErrors.length) {
+          const fieldErrors: Record<string, string> = {}
+        serverErrors.forEach((errMsg) => {
+            if (errMsg.toLowerCase().includes("descricao")) fieldErrors.descricao = errMsg
+            if (errMsg.toLowerCase().includes("tipo")) fieldErrors.tipo = errMsg
+            if (errMsg.toLowerCase().includes("capacidade")) fieldErrors.capacidade = errMsg
+            if (errMsg.toLowerCase().includes("preco")) fieldErrors.preco = errMsg
+            if (errMsg.toLowerCase().includes("quantidade")) fieldErrors.quantidade = errMsg
+            if (errMsg.toLowerCase().includes("frete")) fieldErrors.frete = errMsg
+          })
+          if (Object.keys(fieldErrors).length > 0) {
+            setAddErrors(fieldErrors)
+          }
+        }
+        throw new Error(errorMessage)
+      }
       toast({ title: "Produto cadastrado com sucesso!" })
       setIsAddDialogOpen(false)
       setAddForm({
@@ -258,13 +337,13 @@ export default function EstoquePage() {
         capacidade: "",
         preco: "",
         fornecedor: "",
-        estabelecimentoId: "",
         disponibilidade: "disponivel",
         quantidade: "",
         categoria: "Garrafas",
         files: null,
         frete: "",
       })
+      setAddErrors({})
       window.location.reload()
     } catch (err: any) {
       toast({
@@ -427,7 +506,7 @@ export default function EstoquePage() {
       } finally {
         setLoading(false)
       }
-    }
+    }  
     load()
     return () => {
       mounted = false
@@ -519,44 +598,69 @@ export default function EstoquePage() {
                   <Label>Descrição</Label>
                   <Input
                     value={addForm.descricao}
-                    onChange={e => setAddForm(f => ({ ...f, descricao: e.target.value }))}
+                    onChange={e => {
+                      setAddForm(f => ({ ...f, descricao: e.target.value }))
+                      clearAddError("descricao")
+                    }}
+                    className={addErrors.descricao ? "border-destructive focus-visible:ring-destructive" : undefined}
                     placeholder="Ex: Botija 12kg"
                   />
+                  {addErrors.descricao && <p className="text-xs text-destructive">{addErrors.descricao}</p>}
                 </div>
                 <div className="space-y-2">
                   <Label>Tipo</Label>
                   <Input
                     value={addForm.tipo}
-                    onChange={e => setAddForm(f => ({ ...f, tipo: e.target.value }))}
+                    onChange={e => {
+                      setAddForm(f => ({ ...f, tipo: e.target.value }))
+                      clearAddError("tipo")
+                    }}
+                    className={addErrors.tipo ? "border-destructive focus-visible:ring-destructive" : undefined}
                     placeholder="Ex: GLP"
                   />
+                  {addErrors.tipo && <p className="text-xs text-destructive">{addErrors.tipo}</p>}
                 </div>
                 <div className="space-y-2">
                   <Label>Capacidade (kg)</Label>
                   <Input
                     type="number"
                     value={addForm.capacidade}
-                    onChange={e => setAddForm(f => ({ ...f, capacidade: e.target.value }))}
+                    onChange={e => {
+                      setAddForm(f => ({ ...f, capacidade: e.target.value }))
+                      clearAddError("capacidade")
+                    }}
+                    className={addErrors.capacidade ? "border-destructive focus-visible:ring-destructive" : undefined}
                     placeholder="Ex: 12"
                   />
+                  {addErrors.capacidade && <p className="text-xs text-destructive">{addErrors.capacidade}</p>}
                 </div>
                 <div className="space-y-2">
                   <Label>Preço (Kz)</Label>
                   <Input
                     type="number"
                     value={addForm.preco}
-                    onChange={e => setAddForm(f => ({ ...f, preco: e.target.value }))}
+                    onChange={e => {
+                      setAddForm(f => ({ ...f, preco: e.target.value }))
+                      clearAddError("preco")
+                    }}
+                    className={addErrors.preco ? "border-destructive focus-visible:ring-destructive" : undefined}
                     placeholder="Ex: 15000"
                   />
+                  {addErrors.preco && <p className="text-xs text-destructive">{addErrors.preco}</p>}
                 </div>
                 <div className="space-y-2">
                   <Label>Frete (Kz)</Label>
                   <Input
                     type="number"
                     value={addForm.frete}
-                    onChange={e => setAddForm(f => ({ ...f, frete: e.target.value }))}
+                    onChange={e => {
+                      setAddForm(f => ({ ...f, frete: e.target.value }))
+                      clearAddError("frete")
+                    }}
+                    className={addErrors.frete ? "border-destructive focus-visible:ring-destructive" : undefined}
                     placeholder="Ex: 2000"
                   />
+                  {addErrors.frete && <p className="text-xs text-destructive">{addErrors.frete}</p>}
                 </div>
                 <div className="space-y-2">
                   <Label>Fornecedor</Label>
@@ -594,25 +698,36 @@ export default function EstoquePage() {
                   <Label>Disponibilidade</Label>
                   <Select
                     value={addForm.disponibilidade}
-                    onValueChange={value => setAddForm(f => ({ ...f, disponibilidade: value as "disponivel" | "indisponivel" }))}
+                    onValueChange={value => {
+                      setAddForm(f => ({ ...f, disponibilidade: value as "disponivel" | "indisponivel" }))
+                      clearAddError("disponibilidade")
+                    }}
                   >
                     <SelectTrigger>
-                      <SelectValue />
+                      <SelectValue className={addErrors.disponibilidade ? "text-destructive" : undefined} />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="disponivel">Disponível</SelectItem>
                       <SelectItem value="indisponivel">Indisponível</SelectItem>
                     </SelectContent>
                   </Select>
+                  {addErrors.disponibilidade && (
+                    <p className="text-xs text-destructive">{addErrors.disponibilidade}</p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label>Quantidade</Label>
                   <Input
                     type="number"
                     value={addForm.quantidade}
-                    onChange={e => setAddForm(f => ({ ...f, quantidade: e.target.value }))}
+                    onChange={e => {
+                      setAddForm(f => ({ ...f, quantidade: e.target.value }))
+                      clearAddError("quantidade")
+                    }}
+                    className={addErrors.quantidade ? "border-destructive focus-visible:ring-destructive" : undefined}
                     placeholder="Ex: 10"
                   />
+                  {addErrors.quantidade && <p className="text-xs text-destructive">{addErrors.quantidade}</p>}
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>Imagens</Label>
@@ -880,7 +995,6 @@ export default function EstoquePage() {
                             capacidade: item.capacidade ? String(item.capacidade) : "",
                             preco: item.preco ? String(item.preco) : "",
                             fornecedor: item.fornecedor ?? "",
-                            estabelecimentoId: "",
                             disponibilidade: item.disponibilidade ?? "disponivel",
                             quantidade: String(item.quantidade),
                             categoria: item.categoria ?? "Garrafas",

@@ -5,6 +5,7 @@ import { Analytics } from "@vercel/analytics/next"
 import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/toaster"
 import { Suspense } from "react"
+import { GlobalProgressBar } from "@/components/global-progress-bar"
 import "./globals.css"
 
 const inter = Inter({
@@ -31,6 +32,7 @@ export default function RootLayout({
         />
       </head>
       <body className="font-sans antialiased">
+        <GlobalProgressBar />
         <Suspense
           fallback={
             <div className="flex h-screen items-center justify-center">
