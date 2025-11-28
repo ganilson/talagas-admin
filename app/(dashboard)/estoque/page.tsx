@@ -114,6 +114,8 @@ export default function EstoquePage() {
     frete: "",
   })
   const [addErrors, setAddErrors] = useState<Record<string, string>>({})
+const [isSubmittingProduct, setIsSubmittingProduct] = useState(false)
+const [inventoryViewMode, setInventoryViewMode] = useState<"grid" | "list">("grid")
 
   // Atualiza quantidade no local + no backend (otimista)
   const handleUpdateStock = async (id: string, newQuantity: number) => {
@@ -258,6 +260,7 @@ export default function EstoquePage() {
 
   const handleAddProduct = async () => {
     try {
+    if (isSubmittingProduct) return
       const validation = validateAddForm()
       if (Object.keys(validation).length > 0) {
         setAddErrors(validation)
@@ -269,6 +272,7 @@ export default function EstoquePage() {
         return
       }
       setAddErrors({})
+    setIsSubmittingProduct(true)
 
       const descricao = addForm.descricao.trim()
       const tipo = addForm.tipo.trim()
@@ -351,6 +355,8 @@ export default function EstoquePage() {
         description: err?.message ?? "Não foi possível cadastrar o produto.",
         variant: "destructive",
       })
+  } finally {
+    setIsSubmittingProduct(false)
     }
   }
 
@@ -573,8 +579,28 @@ export default function EstoquePage() {
           </Card>
         </div>
 
-        <div className="flex justify-end mb-4">
-          <Button onClick={() => setIsAddDialogOpen(true)}>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+          <div className="inline-flex rounded-lg border border-border overflow-hidden">
+            <Button
+              type="button"
+              variant={inventoryViewMode === "grid" ? "default" : "ghost"}
+              className={`rounded-none ${inventoryViewMode === "grid" ? "" : "text-muted-foreground"}`}
+              onClick={() => setInventoryViewMode("grid")}
+            >
+              <MaterialIcon icon="grid_view" className="mr-2 text-base" />
+              Grade
+            </Button>
+            <Button
+              type="button"
+              variant={inventoryViewMode === "list" ? "default" : "ghost"}
+              className={`rounded-none ${inventoryViewMode === "list" ? "" : "text-muted-foreground"}`}
+              onClick={() => setInventoryViewMode("list")}
+            >
+              <MaterialIcon icon="view_list" className="mr-2 text-base" />
+              Lista
+            </Button>
+          </div>
+          <Button onClick={() => setIsAddDialogOpen(true)} className="w-full sm:w-auto">
             <MaterialIcon icon="add" className="mr-2" />
             Cadastrar Produto
           </Button>
@@ -743,7 +769,16 @@ export default function EstoquePage() {
                 <Button variant="outline" type="button" onClick={() => setIsAddDialogOpen(false)}>
                   Cancelar
                 </Button>
-                <Button type="submit">Cadastrar</Button>
+                <Button type="submit" disabled={isSubmittingProduct} className="min-w-[140px]">
+                  {isSubmittingProduct ? (
+                    <span className="flex items-center gap-2">
+                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Salvando...
+                    </span>
+                  ) : (
+                    "Cadastrar"
+                  )}
+                </Button>
               </DialogFooter>
             </form>
           </DialogContent>
@@ -884,7 +919,7 @@ export default function EstoquePage() {
           </DialogContent>
         </Dialog>
 
-        {/* Inventory Grid - Cards */}
+        {/* Inventory Views */}
         <div className="space-y-4">
           {loading ? (
             <Card>
@@ -899,6 +934,108 @@ export default function EstoquePage() {
                 <p className="text-muted-foreground">Nenhum produto cadastrado</p>
               </CardContent>
             </Card>
+          ) : inventoryViewMode === "list" ? (
+            <div className="bg-white rounded-lg border border-border divide-y">
+              {inventory.map((item) => {
+                const status = getStockStatus(item.quantidade, item.minimo)
+                const createdDate = item.createdAt ? new Date(item.createdAt).toLocaleDateString("pt-AO") : "-"
+                const hasImages = item.urls && item.urls.length > 0
+                return (
+                  <div key={item.id} className="flex flex-col md:flex-row md:items-center gap-4 p-4 hover:bg-muted/30 transition">
+                    <div className="flex items-center gap-4 flex-1 min-w-0">
+                      <div className="relative w-20 h-20 bg-muted/50 rounded-lg overflow-hidden flex-shrink-0">
+                        {hasImages ? (
+                          <img src={item.urls![0]} alt={item.tipo} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <MaterialIcon icon="image_not_supported" className="text-2xl text-muted-foreground" />
+                          </div>
+                        )}
+                        <div className="absolute top-2 left-2">
+                          <Badge variant="outline" className="text-[10px]">{status.label}</Badge>
+                        </div>
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-semibold text-base text-gray-900 truncate">{item.tipo}</h3>
+                          {item.categoria && <Badge variant="secondary" className="text-[10px]">{item.categoria}</Badge>}
+                        </div>
+                        <p className="text-sm text-muted-foreground truncate">{item.peso}</p>
+                        <div className="mt-1 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-gray-600">
+                          <div>
+                            <span className="text-muted-foreground">Qtd:</span>{" "}
+                            <span className="font-semibold text-gray-900">{item.quantidade}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Preço:</span>{" "}
+                            <span className="font-semibold text-gray-900">{item.preco} Kz</span>
+                          </div>
+                          {item.frete && (
+                            <div>
+                              <span className="text-muted-foreground">Frete:</span>{" "}
+                              <span className="font-semibold text-gray-900">{item.frete} Kz</span>
+                            </div>
+                          )}
+                          <div>
+                            <span className="text-muted-foreground">Criado:</span>{" "}
+                            <span className="font-semibold text-gray-900">{createdDate}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleUpdateStock(item.id, item.quantidade - 1)}
+                        title="Diminuir quantidade"
+                      >
+                        <MaterialIcon icon="remove" className="text-sm" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setEditForm({
+                            id: item.id,
+                            descricao: item.descricao ?? item.tipo,
+                            tipo: item.tipo,
+                            capacidade: item.capacidade ? String(item.capacidade) : "",
+                            preco: item.preco ? String(item.preco) : "",
+                            fornecedor: item.fornecedor ?? "",
+                            disponibilidade: item.disponibilidade ?? "disponivel",
+                            quantidade: String(item.quantidade),
+                            categoria: item.categoria ?? "Garrafas",
+                            files: null,
+                            frete: item.frete ?? "",
+                          })
+                          setIsEditDialogOpen(true)
+                        }}
+                        title="Editar produto"
+                      >
+                        <MaterialIcon icon="edit" className="text-sm" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleUpdateStock(item.id, item.quantidade + 1)}
+                        title="Aumentar quantidade"
+                      >
+                        <MaterialIcon icon="add" className="text-sm" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => setDeleteConfirm(item.id)}
+                      >
+                        <MaterialIcon icon="delete" className="mr-1 text-sm" />
+                        Remover
+                      </Button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {inventory.map((item) => {
@@ -908,7 +1045,6 @@ export default function EstoquePage() {
 
                 return (
                   <Card key={item.id} className="flex flex-col overflow-hidden hover:shadow-lg transition-shadow">
-                    {/* Imagem do Produto */}
                     <div className="relative h-40 bg-muted/50 overflow-hidden">
                       {hasImages ? (
                         <img
@@ -921,11 +1057,9 @@ export default function EstoquePage() {
                           <MaterialIcon icon="image_not_supported" className="text-4xl text-muted-foreground" />
                         </div>
                       )}
-                      {/* Badge de Status */}
                       <div className="absolute top-2 right-2">
                         <Badge variant={status.variant}>{status.label}</Badge>
                       </div>
-                      {/* Badge de Categoria */}
                       {item.categoria && (
                         <div className="absolute top-2 left-2">
                           <Badge variant="outline" className="text-xs">{item.categoria}</Badge>
@@ -933,16 +1067,12 @@ export default function EstoquePage() {
                       )}
                     </div>
 
-                    {/* Conteúdo */}
                     <CardContent className="flex-1 pt-4 pb-3">
                       <div className="space-y-3">
-                        {/* Título */}
                         <div>
                           <h3 className="font-semibold text-base line-clamp-1">{item.tipo}</h3>
                           <p className="text-xs text-muted-foreground">{item.peso}</p>
                         </div>
-
-                        {/* Informações principais */}
                         <div className="space-y-2 text-sm">
                           <div className="flex justify-between items-center">
                             <span className="text-muted-foreground">Quantidade:</span>
@@ -965,8 +1095,6 @@ export default function EstoquePage() {
                             </div>
                           )}
                         </div>
-
-                        {/* Data de criação */}
                         <div className="flex items-center gap-1 text-xs text-muted-foreground pt-2 border-t">
                           <MaterialIcon icon="calendar_today" className="text-sm" />
                           Criado em {createdDate}
@@ -974,7 +1102,6 @@ export default function EstoquePage() {
                       </div>
                     </CardContent>
 
-                    {/* Ações */}
                     <div className="border-t p-3 grid grid-cols-3 gap-2">
                       <Button
                         size="sm"
@@ -1017,7 +1144,6 @@ export default function EstoquePage() {
                       </Button>
                     </div>
 
-                    {/* Botão deletar - sempre visível */}
                     <div className="border-t p-3">
                       <Button
                         size="sm"

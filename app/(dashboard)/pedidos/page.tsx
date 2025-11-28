@@ -93,6 +93,21 @@ export default function PedidosPage() {
   const [currentPage, setCurrentPage] = useState(1)
   const [codigoPedidoInput, setCodigoPedidoInput] = useState("")
 
+  // Advanced filters
+  const [filterBairro, setFilterBairro] = useState("all")
+  const [filterEntregador, setFilterEntregador] = useState("all")
+  const [filterTipoBotija, setFilterTipoBotija] = useState("all")
+  const [filterMetodoPagamento, setFilterMetodoPagamento] = useState("all")
+  const [filterPriceMin, setFilterPriceMin] = useState("")
+  const [filterPriceMax, setFilterPriceMax] = useState("")
+  const [filterDateStart, setFilterDateStart] = useState("")
+  const [filterDateEnd, setFilterDateEnd] = useState("")
+  const [sortBy, setSortBy] = useState<"createdAt" | "valor" | "tempoEntrega">("createdAt")
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
+
+  // Current date for display
+  const [currentDate, setCurrentDate] = useState(new Date())
+
   // transportadores para seleção no encaminhamento
   const [transportadores, setTransportadores] = useState<any[]>([])
   const [loadingTransportadores, setLoadingTransportadores] = useState(false)
@@ -174,6 +189,14 @@ export default function PedidosPage() {
     loadPedidos()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pedidoFilters.page, pedidoFilters.limit, pedidoFilters.status, pedidoFilters.codigoPedido])
+
+  // Update current date every minute
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentDate(new Date())
+    }, 60000) // Update every minute
+    return () => clearInterval(interval)
+  }, [])
 
   // Reproduz som de notificação
   const playNotificationSound = () => {
@@ -470,7 +493,9 @@ export default function PedidosPage() {
                   Produto deletado
                 </Badge>
               )}
-              <span className="text-xs text-muted-foreground">{order.horario}</span>
+              <span className="text-xs text-muted-foreground">
+                {order.createdAt.toLocaleDateString("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric" })} • {order.horario}
+              </span>
               <Badge variant="outline" className="gap-1">
                 <MaterialIcon icon={getMetodoPagamentoIcon(order.metodoPagamento)} className="text-sm" />
                 {order.metodoPagamento}
@@ -516,7 +541,7 @@ export default function PedidosPage() {
             </div>
           </div>
 
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
             <Button size="sm" variant="ghost" onClick={() => { setSelectedOrder(order); setIsDetailsDialogOpen(true) }}>
               <MaterialIcon icon="visibility" />
             </Button>
@@ -549,12 +574,88 @@ export default function PedidosPage() {
     }))
   }
 
+  // Clear all advanced filters
+  const handleClearFilters = () => {
+    setFilterBairro("all")
+    setFilterEntregador("all")
+    setFilterTipoBotija("all")
+    setFilterMetodoPagamento("all")
+    setFilterPriceMin("")
+    setFilterPriceMax("")
+    setFilterDateStart("")
+    setFilterDateEnd("")
+    setSortBy("createdAt")
+    setSortOrder("desc")
+  }
+
+  // Handle bulk actions on selected orders
+  const handleBulkAction = async (action: "aceitar" | "cancelar" | "exportar") => {
+    if (selectedOrders.size === 0) return
+
+    switch (action) {
+      case "aceitar":
+        for (const orderId of selectedOrders) {
+          const pedido = pedidos.find((p) => p.codigoPedido === orderId)
+          if (pedido && pedido.status === "pendente") {
+            await handleUpdateOrderStatus(pedido._id, "confirmado")
+          }
+        }
+        setSelectedOrders(new Set())
+        toast({ title: "Pedidos aceitos", description: `${selectedOrders.size} pedido(s) aceito(s)` })
+        break
+
+      case "cancelar":
+        for (const orderId of selectedOrders) {
+          const pedido = pedidos.find((p) => p.codigoPedido === orderId)
+          if (pedido) {
+            await handleUpdateOrderStatus(pedido._id, "cancelado")
+          }
+        }
+        setSelectedOrders(new Set())
+        toast({ title: "Pedidos cancelados", description: `${selectedOrders.size} pedido(s) cancelado(s)` })
+        break
+
+      case "exportar":
+        const selectedOrdersData = ordersForRender.filter((o) => selectedOrders.has(o.id))
+        const rows = selectedOrdersData.map((order) => [
+          order.id,
+          order.cliente,
+          order.telefone,
+          order.bairro,
+          order.valor.toString(),
+          order.status,
+          order.metodoPagamento,
+          order.createdAt.toLocaleDateString("pt-AO"),
+          order.entregador || "-",
+        ])
+        const headers = ["ID", "Cliente", "Telefone", "Bairro", "Valor", "Status", "Método Pagamento", "Data", "Entregador"]
+        const csv = [headers, ...rows].map((r) => r.join(",")).join("\n")
+        const blob = new Blob([csv], { type: "text/csv" })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = `pedidos-selecionados-${new Date().toISOString().split("T")[0]}.csv`
+        a.click()
+        URL.revokeObjectURL(url)
+        toast({ title: "Exportação concluída", description: `${rows.length} pedido(s) exportado(s)` })
+        break
+    }
+  }
+
   return (
     <div className="flex flex-col">
-      <AppHeader title="Pedidos" />
-      <div className="flex-1 space-y-6 p-6">
+      <AppHeader
+        title="Pedidos"
+        subtitle={currentDate.toLocaleDateString("pt-PT", {
+          weekday: "long",
+          year: "numeric",
+          month: "long",
+          day: "numeric"
+        })}
+      />
+      <div className="flex-1 space-y-6 p-4 md:p-6">
         {/* Stats: counts calculated from current 'pedidos' page (for global counts you'd fetch a dashboard endpoint) */}
-        <div className="grid gap-4 md:grid-cols-5">
+        <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 md:grid-cols-5">
           <Card className="transition-all hover:shadow-lg">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Pendentes</CardTitle>
@@ -648,28 +749,30 @@ export default function PedidosPage() {
                 </div>
               </div>
 
-              <div className="flex flex-col gap-2 md:flex-row">
+              <div className="flex flex-col gap-2">
                 <div className="relative flex-1">
                   <MaterialIcon icon="search" className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                   <Input placeholder="Pesquisar (não aplicado no servidor)" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-10" />
                 </div>
 
-                {/* Código do Pedido - usado no endpoint */}
-                <Input placeholder="Código do Pedido" value={codigoPedidoInput} onChange={(e) => setCodigoPedidoInput(e.target.value)} className="md:w-[200px]" />
-                <Button size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: 1, codigoPedido: codigoPedidoInput || undefined }))}>Buscar</Button>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  {/* Código do Pedido - usado no endpoint */}
+                  <Input placeholder="Código do Pedido" value={codigoPedidoInput} onChange={(e) => setCodigoPedidoInput(e.target.value)} className="flex-1 sm:w-auto" />
+                  <Button size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: 1, codigoPedido: codigoPedidoInput || undefined }))}>Buscar</Button>
 
-                <Select value={filterStatus} onValueChange={(value: any) => { setFilterStatus(value); setPedidoFilters((f) => ({ ...f, page: 1, status: value === "all" ? undefined : value })) }}>
-                  <SelectTrigger className="w-full md:w-[180px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todos Status</SelectItem>
-                    <SelectItem value="pendente">Pendentes</SelectItem>
-                    <SelectItem value="confirmado">Confirmados</SelectItem>
-                    <SelectItem value="entregue">Entregues</SelectItem>
-                    <SelectItem value="cancelado">Cancelados</SelectItem>
-                  </SelectContent>
-                </Select>
+                  <Select value={filterStatus} onValueChange={(value: any) => { setFilterStatus(value); setPedidoFilters((f) => ({ ...f, page: 1, status: value === "all" ? undefined : value })) }}>
+                    <SelectTrigger className="w-full sm:w-[180px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos Status</SelectItem>
+                      <SelectItem value="pendente">Pendentes</SelectItem>
+                      <SelectItem value="confirmado">Confirmados</SelectItem>
+                      <SelectItem value="entregue">Entregues</SelectItem>
+                      <SelectItem value="cancelado">Cancelados</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               {showFilters && (
@@ -682,7 +785,7 @@ export default function PedidosPage() {
                     </Button>
                   </div>
 
-                  <div className="grid gap-4 md:grid-cols-3">
+                  <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
                     <div className="space-y-2">
                       <Label>Bairro</Label>
                       <Select value={filterBairro} onValueChange={setFilterBairro}>
@@ -847,14 +950,20 @@ export default function PedidosPage() {
                 </div>
 
                 {/* Paginação: sempre 10 por página */}
-                <div className="mt-6 flex flex-col gap-4 border-t border-border pt-4 md:flex-row md:items-center md:justify-between">
-                  <p className="text-sm text-muted-foreground">
+                <div className="mt-6 flex flex-col gap-4 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm text-muted-foreground text-center sm:text-left">
                     Página {pedidoFilters.page} de {pedidosPagination?.pages ?? 1} • {pedidosPagination?.total ?? pedidos.length} pedido(s) total
                   </p>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 justify-center sm:justify-start flex-wrap">
                     <Button variant="outline" size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: 1 }))} disabled={pedidoFilters.page === 1}><MaterialIcon icon="first_page" /></Button>
-                    <Button variant="outline" size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: Math.max(1, f.page - 1) }))} disabled={pedidoFilters.page === 1}><MaterialIcon icon="chevron_left" className="mr-1" />Anterior</Button>
-                    <Button variant="outline" size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: Math.min((pedidosPagination?.pages ?? 1), f.page + 1) }))} disabled={pedidoFilters.page === (pedidosPagination?.pages ?? 1)}>Próxima<MaterialIcon icon="chevron_right" className="ml-1" /></Button>
+                    <Button variant="outline" size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: Math.max(1, f.page - 1) }))} disabled={pedidoFilters.page === 1}>
+                      <MaterialIcon icon="chevron_left" className="sm:mr-1" />
+                      <span className="hidden sm:inline">Anterior</span>
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: Math.min((pedidosPagination?.pages ?? 1), f.page + 1) }))} disabled={pedidoFilters.page === (pedidosPagination?.pages ?? 1)}>
+                      <span className="hidden sm:inline">Próxima</span>
+                      <MaterialIcon icon="chevron_right" className="sm:ml-1" />
+                    </Button>
                     <Button variant="outline" size="sm" onClick={() => setPedidoFilters((f) => ({ ...f, page: pedidosPagination?.pages ?? f.page }))} disabled={pedidoFilters.page === (pedidosPagination?.pages ?? 1)}><MaterialIcon icon="last_page" /></Button>
                   </div>
                 </div>
